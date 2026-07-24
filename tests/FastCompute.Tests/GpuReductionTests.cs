@@ -189,9 +189,53 @@ public sealed class GpuReductionTests
             Assert.That(simple.Diagnostics.Backend, Is.EqualTo(ComputeBackendKind.Gpu));
             Assert.That(heavy.Diagnostics.Backend, Is.EqualTo(ComputeBackendKind.Gpu));
             Assert.That(simple.Diagnostics.DeviceName, Does.Contain("NVIDIA"));
+            Assert.That(
+                simple.Diagnostics.BackendSelectionReason,
+                Does.Contain("GPU selected"));
+            Assert.That(
+                simple.Diagnostics.EstimatedGpuMemoryBytes,
+                Is.GreaterThan(0));
+            Assert.That(
+                simple.Diagnostics.GpuMemoryBudgetBytes,
+                Is.GreaterThan(simple.Diagnostics.EstimatedGpuMemoryBytes));
             Assert.That(reduction, Is.EqualTo(Compute.Max(
                 source,
                 new ComputeOptions { Backend = ComputeBackendKind.Scalar })));
+        });
+    }
+
+    [Test]
+    public void Auto_RejectsGpuWhenWorkingSetExceedsMemoryBudget()
+    {
+        using ComputeContext context = CreateCudaContext();
+        float[] source = CreateSource(1_024);
+        var options = new ComputeOptions
+        {
+            GpuContext = context,
+            GpuMemoryBudgetBytes = 1_024,
+            Thresholds = new ComputeThresholdOptions
+            {
+                GpuHeavyThreshold = 0
+            }
+        };
+
+        var result = Compute.RunWithDiagnostics(
+            source,
+            value => GpuMath.Sin(value),
+            options);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                result.Diagnostics.Backend,
+                Is.EqualTo(ComputeBackendKind.Scalar));
+            Assert.That(
+                result.Diagnostics.BackendSelectionReason,
+                Does.Contain("exceeds"));
+            Assert.That(
+                result.Diagnostics.EstimatedGpuMemoryBytes,
+                Is.GreaterThan(result.Diagnostics.GpuMemoryBudgetBytes));
+            Assert.That(result.Diagnostics.DeviceName, Is.Null);
         });
     }
 

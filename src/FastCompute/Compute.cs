@@ -51,6 +51,100 @@ public static class Compute
     }
 
     /// <summary>
+    /// Applies an expression to every element and stores each result back into
+    /// the source array.
+    /// </summary>
+    /// <remarks>
+    /// If execution is cancelled or a backend operation fails, elements already
+    /// processed are not rolled back.
+    /// </remarks>
+    /// <param name="source">The array to read and overwrite.</param>
+    /// <param name="expression">The expression applied to each element.</param>
+    /// <param name="options">Optional execution settings.</param>
+    /// <returns>The same array instance supplied in <paramref name="source"/>.</returns>
+    public static float[] RunInPlace(
+        float[] source,
+        Expression<Func<float, float>> expression,
+        ComputeOptions? options = null) =>
+        RunInPlaceCore(
+            source,
+            expression,
+            options,
+            collectDiagnostics: false,
+            out _);
+
+    /// <summary>
+    /// Applies an expression in place and returns execution diagnostics.
+    /// </summary>
+    /// <remarks>
+    /// If execution is cancelled or a backend operation fails, elements already
+    /// processed are not rolled back.
+    /// </remarks>
+    /// <param name="source">The array to read and overwrite.</param>
+    /// <param name="expression">The expression applied to each element.</param>
+    /// <param name="options">Optional execution settings.</param>
+    /// <returns>The source array and collected diagnostics.</returns>
+    public static ComputeResult<float[]> RunInPlaceWithDiagnostics(
+        float[] source,
+        Expression<Func<float, float>> expression,
+        ComputeOptions? options = null)
+    {
+        float[] value = RunInPlaceCore(
+            source,
+            expression,
+            options,
+            collectDiagnostics: true,
+            out ComputeDiagnostics? diagnostics);
+
+        return new ComputeResult<float[]>(value, diagnostics!);
+    }
+
+    /// <summary>
+    /// Applies an arbitrary user delegate to every element using a CPU backend.
+    /// </summary>
+    /// <remarks>
+    /// The delegate is executed directly and is not converted to the compute IR.
+    /// Auto selects only Scalar or Parallel CPU for this operation.
+    /// </remarks>
+    /// <param name="source">The input array.</param>
+    /// <param name="operation">The user operation applied to each element.</param>
+    /// <param name="options">Optional execution settings.</param>
+    /// <returns>A new array containing the computed values.</returns>
+    public static float[] RunDelegate(
+        float[] source,
+        Func<float, float> operation,
+        ComputeOptions? options = null) =>
+        RunDelegateCore(
+            source,
+            operation,
+            options,
+            collectDiagnostics: false,
+            out _);
+
+    /// <summary>
+    /// Applies an arbitrary user delegate using a CPU backend and returns
+    /// execution diagnostics.
+    /// </summary>
+    /// <param name="source">The input array.</param>
+    /// <param name="operation">The user operation applied to each element.</param>
+    /// <param name="options">Optional execution settings.</param>
+    /// <returns>The computed array and collected diagnostics.</returns>
+    public static ComputeResult<float[]> RunDelegateWithDiagnostics(
+        float[] source,
+        Func<float, float> operation,
+        ComputeOptions? options = null)
+    {
+        float[] value = RunDelegateCore(
+            source,
+            operation,
+            options,
+            collectDiagnostics: true,
+            out ComputeDiagnostics? diagnostics);
+
+        return new ComputeResult<float[]>(value, diagnostics!);
+    }
+
+    /// <summary>
     /// Applies a binary expression to corresponding elements of two arrays.
     /// </summary>
     /// <param name="left">The first input array.</param>
@@ -79,7 +173,8 @@ public static class Compute
         ComputeOptions effectiveOptions = ValidateOptions(options);
         effectiveOptions.CancellationToken.ThrowIfCancellationRequested();
         ComputeExpressionPlan plan = CreatePlan(expression, effectiveOptions);
-        IComputeBackend backend = ResolveBackend(effectiveOptions, plan, left.Length);
+        IComputeBackend backend =
+            ResolveBackend(effectiveOptions, plan, left.Length).Backend;
         var context = CreateExecutionContext(effectiveOptions, collectDiagnostics: false);
 
         return backend.ExecuteZip(left, right, plan, context).Value;
@@ -124,7 +219,8 @@ public static class Compute
 
         ComputeOptions effectiveOptions = ValidateOptions(options);
         effectiveOptions.CancellationToken.ThrowIfCancellationRequested();
-        IComputeBackend backend = ResolveBackend(effectiveOptions, plan: null, source.Length);
+        IComputeBackend backend =
+            ResolveBackend(effectiveOptions, plan: null, source.Length).Backend;
         var context = CreateExecutionContext(effectiveOptions, collectDiagnostics: false);
         return backend.Reduce(source, reduction, context).Value;
     }
@@ -143,7 +239,9 @@ public static class Compute
         ComputeOptions effectiveOptions = ValidateOptions(options);
         effectiveOptions.CancellationToken.ThrowIfCancellationRequested();
         ComputeExpressionPlan plan = CreatePlan(expression, effectiveOptions);
-        IComputeBackend backend = ResolveBackend(effectiveOptions, plan, source.Length);
+        BackendResolution resolution =
+            ResolveBackend(effectiveOptions, plan, source.Length);
+        IComputeBackend backend = resolution.Backend;
         TimeSpan planningTime = collectDiagnostics
             ? Stopwatch.GetElapsedTime(planningStarted)
             : TimeSpan.Zero;
@@ -162,6 +260,128 @@ public static class Compute
                 execution.DownloadTime,
                 execution.KernelCacheHit,
                 execution.DeviceName)
+            {
+                BackendSelectionReason = resolution.Reason,
+                EstimatedGpuMemoryBytes = resolution.EstimatedGpuMemoryBytes,
+                GpuMemoryBudgetBytes = resolution.GpuMemoryBudgetBytes
+            }
+            : null;
+
+        return execution.Value;
+    }
+
+    private static float[] RunDelegateCore(
+        float[] source,
+        Func<float, float> operation,
+        ComputeOptions? options,
+        bool collectDiagnostics,
+        out ComputeDiagnostics? diagnostics)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(operation);
+
+        long planningStarted = collectDiagnostics ? Stopwatch.GetTimestamp() : 0L;
+        ComputeOptions effectiveOptions = ValidateOptions(options);
+        effectiveOptions.CancellationToken.ThrowIfCancellationRequested();
+        BackendResolution resolution =
+            ResolveDelegateBackend(effectiveOptions, source.Length);
+        TimeSpan planningTime = collectDiagnostics
+            ? Stopwatch.GetElapsedTime(planningStarted)
+            : TimeSpan.Zero;
+        var context =
+            CreateExecutionContext(effectiveOptions, collectDiagnostics);
+        ComputeBackendExecution<float[]> execution =
+            resolution.Backend.Kind switch
+            {
+                ComputeBackendKind.Scalar =>
+                    ScalarComputeBackend.Instance.ExecuteDelegateMap(
+                        source,
+                        operation,
+                        context),
+                ComputeBackendKind.ParallelCpu =>
+                    ParallelComputeBackend.Instance.ExecuteDelegateMap(
+                        source,
+                        operation,
+                        context),
+                _ => throw new InvalidOperationException(
+                    "Delegate backend resolution returned a non-CPU backend.")
+            };
+
+        diagnostics = collectDiagnostics
+            ? new ComputeDiagnostics(
+                resolution.Backend.Kind,
+                planningTime,
+                execution.CompilationTime,
+                execution.UploadTime,
+                execution.ExecutionTime,
+                execution.DownloadTime,
+                execution.KernelCacheHit,
+                execution.DeviceName)
+            {
+                BackendSelectionReason = resolution.Reason
+            }
+            : null;
+
+        return execution.Value;
+    }
+
+    private static float[] RunInPlaceCore(
+        float[] source,
+        Expression<Func<float, float>> expression,
+        ComputeOptions? options,
+        bool collectDiagnostics,
+        out ComputeDiagnostics? diagnostics)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(expression);
+
+        long planningStarted = collectDiagnostics ? Stopwatch.GetTimestamp() : 0L;
+        ComputeOptions effectiveOptions = ValidateOptions(options);
+        effectiveOptions.CancellationToken.ThrowIfCancellationRequested();
+        ComputeExpressionPlan plan = CreatePlan(expression, effectiveOptions);
+        BackendResolution resolution =
+            ResolveInPlaceBackend(effectiveOptions, plan, source.Length);
+        TimeSpan planningTime = collectDiagnostics
+            ? Stopwatch.GetElapsedTime(planningStarted)
+            : TimeSpan.Zero;
+        var context =
+            CreateExecutionContext(effectiveOptions, collectDiagnostics);
+        ComputeBackendExecution<float[]> execution =
+            resolution.Backend.Kind switch
+            {
+                ComputeBackendKind.Scalar =>
+                    ScalarComputeBackend.Instance.ExecuteMapInPlace(
+                        source,
+                        plan,
+                        context),
+                ComputeBackendKind.ParallelCpu =>
+                    ParallelComputeBackend.Instance.ExecuteMapInPlace(
+                        source,
+                        plan,
+                        context),
+                ComputeBackendKind.Simd =>
+                    SimdComputeBackend.Instance.ExecuteMapInPlace(
+                        source,
+                        plan,
+                        context),
+                _ => throw new InvalidOperationException(
+                    "In-place backend resolution returned an unsupported backend.")
+            };
+
+        diagnostics = collectDiagnostics
+            ? new ComputeDiagnostics(
+                resolution.Backend.Kind,
+                planningTime,
+                execution.CompilationTime,
+                execution.UploadTime,
+                execution.ExecutionTime,
+                execution.DownloadTime,
+                execution.KernelCacheHit,
+                execution.DeviceName)
+            {
+                BackendSelectionReason = resolution.Reason,
+                IsInPlace = true
+            }
             : null;
 
         return execution.Value;
@@ -185,6 +405,14 @@ public static class Compute
         ValidateThreshold(result.Thresholds.GpuSimpleThreshold, nameof(ComputeThresholdOptions.GpuSimpleThreshold));
         ValidateThreshold(result.Thresholds.GpuMediumThreshold, nameof(ComputeThresholdOptions.GpuMediumThreshold));
         ValidateThreshold(result.Thresholds.GpuHeavyThreshold, nameof(ComputeThresholdOptions.GpuHeavyThreshold));
+
+        if (result.GpuMemoryBudgetBytes is <= 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(options),
+                result.GpuMemoryBudgetBytes,
+                "GpuMemoryBudgetBytes must be greater than zero.");
+        }
 
         return result;
     }
@@ -227,46 +455,217 @@ public static class Compute
         };
     }
 
-    private static IComputeBackend ResolveBackend(
+    private static BackendResolution ResolveBackend(
         ComputeOptions options,
         ComputeExpressionPlan? plan,
         int elementCount)
     {
-        IComputeBackend backend = options.Backend switch
+        BackendResolution resolution = options.Backend switch
         {
             ComputeBackendKind.Auto => SelectAutomaticBackend(options, plan, elementCount),
-            ComputeBackendKind.Scalar => ScalarComputeBackend.Instance,
-            ComputeBackendKind.ParallelCpu => ParallelComputeBackend.Instance,
-            ComputeBackendKind.Simd => SimdComputeBackend.Instance,
-            ComputeBackendKind.Gpu => GpuComputeBackend.Instance,
+            ComputeBackendKind.Scalar => Explicit(ScalarComputeBackend.Instance),
+            ComputeBackendKind.ParallelCpu => Explicit(ParallelComputeBackend.Instance),
+            ComputeBackendKind.Simd => Explicit(SimdComputeBackend.Instance),
+            ComputeBackendKind.Gpu => Explicit(GpuComputeBackend.Instance),
             _ => throw new ComputeBackendUnavailableException(options.Backend)
         };
+        IComputeBackend backend = resolution.Backend;
 
         if (!backend.IsAvailable || (plan is not null && !backend.Supports(plan)))
         {
             if (options.Backend == ComputeBackendKind.Auto && options.AllowFallback)
             {
-                return ScalarComputeBackend.Instance;
+                return new BackendResolution(
+                    ScalarComputeBackend.Instance,
+                    $"{resolution.Reason} Selected backend was unavailable; " +
+                    "Scalar fallback was used.",
+                    resolution.EstimatedGpuMemoryBytes,
+                    resolution.GpuMemoryBudgetBytes);
             }
 
             throw new ComputeBackendUnavailableException(backend.Kind);
         }
 
-        return backend;
+        return resolution;
     }
 
-    private static IComputeBackend SelectAutomaticBackend(
+    private static BackendResolution ResolveDelegateBackend(
+        ComputeOptions options,
+        int elementCount) =>
+        options.Backend switch
+        {
+            ComputeBackendKind.Auto =>
+                SelectAutomaticDelegateBackend(options, elementCount),
+            ComputeBackendKind.Scalar =>
+                Explicit(ScalarComputeBackend.Instance),
+            ComputeBackendKind.ParallelCpu =>
+                Explicit(ParallelComputeBackend.Instance),
+            ComputeBackendKind.Simd or ComputeBackendKind.Gpu =>
+                throw new ComputeBackendNotSupportedException(
+                    options.Backend,
+                    "arbitrary user delegates",
+                    $"{ComputeBackendKind.Scalar}, {ComputeBackendKind.ParallelCpu}"),
+            _ => throw new ComputeBackendUnavailableException(options.Backend)
+        };
+
+    private static BackendResolution ResolveInPlaceBackend(
+        ComputeOptions options,
+        ComputeExpressionPlan plan,
+        int elementCount)
+    {
+        BackendResolution resolution = options.Backend switch
+        {
+            ComputeBackendKind.Auto =>
+                SelectAutomaticInPlaceBackend(options, plan, elementCount),
+            ComputeBackendKind.Scalar =>
+                Explicit(ScalarComputeBackend.Instance),
+            ComputeBackendKind.ParallelCpu =>
+                Explicit(ParallelComputeBackend.Instance),
+            ComputeBackendKind.Simd =>
+                Explicit(SimdComputeBackend.Instance),
+            ComputeBackendKind.Gpu =>
+                throw new ComputeBackendNotSupportedException(
+                    options.Backend,
+                    "in-place Map",
+                    $"{ComputeBackendKind.Scalar}, " +
+                    $"{ComputeBackendKind.ParallelCpu}, " +
+                    $"{ComputeBackendKind.Simd}"),
+            _ => throw new ComputeBackendUnavailableException(options.Backend)
+        };
+
+        if (!resolution.Backend.IsAvailable ||
+            !resolution.Backend.Supports(plan))
+        {
+            throw new ComputeBackendUnavailableException(
+                resolution.Backend.Kind);
+        }
+
+        return resolution;
+    }
+
+    private static BackendResolution SelectAutomaticInPlaceBackend(
+        ComputeOptions options,
+        ComputeExpressionPlan plan,
+        int elementCount)
+    {
+        bool simdSupported =
+            SimdComputeBackend.Instance.IsAvailable &&
+            SimdComputeBackend.Instance.Supports(plan);
+
+        if (simdSupported &&
+            elementCount >= options.Thresholds.SimdThreshold)
+        {
+            return new BackendResolution(
+                SimdComputeBackend.Instance,
+                "GPU in-place execution is not implemented. SIMD selected " +
+                "because the expression is supported and its threshold was reached.",
+                null,
+                null);
+        }
+
+        int availableParallelism =
+            options.MaxDegreeOfParallelism ?? Environment.ProcessorCount;
+        if (availableParallelism > 1 &&
+            elementCount >= options.Thresholds.ParallelThreshold)
+        {
+            return new BackendResolution(
+                ParallelComputeBackend.Instance,
+                "GPU in-place execution is not implemented. Parallel CPU " +
+                "selected because SIMD was unavailable or unsupported and the " +
+                "parallel threshold was reached.",
+                null,
+                null);
+        }
+
+        return new BackendResolution(
+            ScalarComputeBackend.Instance,
+            "GPU in-place execution is not implemented. Scalar selected " +
+            "because no accelerated CPU backend met its requirements.",
+            null,
+            null);
+    }
+
+    private static BackendResolution SelectAutomaticDelegateBackend(
+        ComputeOptions options,
+        int elementCount)
+    {
+        int availableParallelism =
+            options.MaxDegreeOfParallelism ?? Environment.ProcessorCount;
+
+        if (availableParallelism > 1 &&
+            elementCount >= options.Thresholds.ParallelThreshold)
+        {
+            return new BackendResolution(
+                ParallelComputeBackend.Instance,
+                "Parallel CPU selected because arbitrary delegates are CPU-only " +
+                "and the parallel threshold was reached.",
+                null,
+                null);
+        }
+
+        return new BackendResolution(
+            ScalarComputeBackend.Instance,
+            "Scalar selected because arbitrary delegates are CPU-only and the " +
+            "parallel threshold or available parallelism requirement was not met.",
+            null,
+            null);
+    }
+
+    private static BackendResolution SelectAutomaticBackend(
         ComputeOptions options,
         ComputeExpressionPlan? plan,
         int elementCount)
     {
+        ComputeExpressionComplexity complexity =
+            ComputeExpressionClassifier.Classify(plan);
         int gpuThreshold =
             ComputeExpressionClassifier.GetGpuThreshold(plan, options.Thresholds);
-        if (elementCount >= gpuThreshold &&
-            (options.GpuContext is not null ||
-             GpuComputeBackend.HasHardwareAccelerator))
+        string gpuDecision;
+        long? estimatedGpuMemoryBytes = null;
+        long? gpuMemoryBudgetBytes = null;
+
+        if (complexity == ComputeExpressionComplexity.Simple &&
+            gpuThreshold == int.MaxValue)
         {
-            return GpuComputeBackend.Instance;
+            gpuDecision =
+                "GPU was not considered because automatic GPU selection for " +
+                "CPU-resident simple expressions is disabled by default.";
+        }
+        else if (elementCount < gpuThreshold)
+        {
+            gpuDecision = $"GPU threshold {gpuThreshold} was not reached.";
+        }
+        else if (!GpuComputeBackend.TryGetAutomaticMemoryBudget(
+                     options.GpuContext,
+                     options.GpuMemoryBudgetBytes,
+                     out long memoryBudget))
+        {
+            gpuDecision = "No hardware GPU accelerator is available.";
+        }
+        else
+        {
+            estimatedGpuMemoryBytes =
+                EstimateGpuWorkingSetBytes(
+                    plan?.ParameterCount ?? 1,
+                    elementCount);
+            gpuMemoryBudgetBytes = memoryBudget;
+
+            if (estimatedGpuMemoryBytes <= memoryBudget)
+            {
+                return new BackendResolution(
+                    GpuComputeBackend.Instance,
+                    $"GPU selected for a {complexity.ToString().ToLowerInvariant()} " +
+                    $"expression; estimated working set " +
+                    $"{estimatedGpuMemoryBytes} bytes fits the " +
+                    $"{memoryBudget}-byte budget.",
+                    estimatedGpuMemoryBytes,
+                    gpuMemoryBudgetBytes);
+            }
+
+            gpuDecision =
+                $"GPU rejected because estimated working set " +
+                $"{estimatedGpuMemoryBytes} bytes exceeds the " +
+                $"{memoryBudget}-byte memory budget.";
         }
 
         bool simdSupported =
@@ -276,15 +675,70 @@ public static class Compute
         if (simdSupported &&
             elementCount >= options.Thresholds.SimdThreshold)
         {
-            return SimdComputeBackend.Instance;
+            return new BackendResolution(
+                SimdComputeBackend.Instance,
+                $"{gpuDecision} SIMD selected because the expression is " +
+                "supported and its threshold was reached.",
+                estimatedGpuMemoryBytes,
+                gpuMemoryBudgetBytes);
         }
 
         int availableParallelism =
             options.MaxDegreeOfParallelism ?? Environment.ProcessorCount;
 
-        return availableParallelism > 1 &&
-               elementCount >= options.Thresholds.ParallelThreshold
-            ? ParallelComputeBackend.Instance
-            : ScalarComputeBackend.Instance;
+        if (availableParallelism > 1 &&
+            elementCount >= options.Thresholds.ParallelThreshold)
+        {
+            return new BackendResolution(
+                ParallelComputeBackend.Instance,
+                $"{gpuDecision} Parallel CPU selected because SIMD is " +
+                "unavailable or unsupported and the parallel threshold was reached.",
+                estimatedGpuMemoryBytes,
+                gpuMemoryBudgetBytes);
+        }
+
+        return new BackendResolution(
+            ScalarComputeBackend.Instance,
+            $"{gpuDecision} Scalar selected because no accelerated CPU backend " +
+            "met its availability and threshold requirements.",
+            estimatedGpuMemoryBytes,
+            gpuMemoryBudgetBytes);
     }
+
+    internal static long EstimateGpuWorkingSetBytes(
+        int parameterCount,
+        int elementCount)
+    {
+        if (elementCount == 0)
+        {
+            return 0;
+        }
+
+        int fullLengthBuffers = parameterCount switch
+        {
+            2 => 3,
+            1 => 2,
+            _ => throw new ArgumentOutOfRangeException(nameof(parameterCount))
+        };
+        const long planningOverheadBytes = 1024 * 1024;
+
+        return checked(
+            (long)elementCount *
+            sizeof(float) *
+            fullLengthBuffers +
+            planningOverheadBytes);
+    }
+
+    private static BackendResolution Explicit(IComputeBackend backend) =>
+        new(
+            backend,
+            $"{backend.Kind} was explicitly requested.",
+            null,
+            null);
+
+    private readonly record struct BackendResolution(
+        IComputeBackend Backend,
+        string Reason,
+        long? EstimatedGpuMemoryBytes,
+        long? GpuMemoryBudgetBytes);
 }

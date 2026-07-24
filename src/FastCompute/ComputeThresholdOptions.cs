@@ -12,10 +12,11 @@ public sealed class ComputeThresholdOptions
     public int ParallelThreshold { get; init; } = 100_000;
 
     /// <summary>
-    /// Gets the CPU-memory GPU threshold for simple expressions. The conservative
-    /// default reflects the transfer cost measured against AVX SIMD.
+    /// Gets the CPU-memory GPU threshold for simple expressions. The default
+    /// disables automatic GPU selection because PCIe transfer normally dominates
+    /// arithmetic-only one-shot operations. Set a lower value to opt in.
     /// </summary>
-    public int GpuSimpleThreshold { get; init; } = 100_000_000;
+    public int GpuSimpleThreshold { get; init; } = int.MaxValue;
 
     /// <summary>Gets the CPU-memory GPU threshold for medium expressions.</summary>
     public int GpuMediumThreshold { get; init; } = 2_000_000;

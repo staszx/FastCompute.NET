@@ -37,6 +37,31 @@ public sealed class ComputeBackendUnavailableException : ComputeException
 }
 
 /// <summary>
+/// Indicates that a backend does not support the requested operation kind.
+/// </summary>
+public sealed class ComputeBackendNotSupportedException : ComputeException
+{
+    /// <summary>Initializes an exception for an unsupported backend operation.</summary>
+    public ComputeBackendNotSupportedException(
+        ComputeBackendKind backend,
+        string operation,
+        string supportedBackends)
+        : base(
+            $"The compute backend '{backend}' does not support {operation}. " +
+            $"Supported backends: {supportedBackends}.")
+    {
+        Backend = backend;
+        Operation = operation;
+    }
+
+    /// <summary>Gets the backend that rejected the operation.</summary>
+    public ComputeBackendKind Backend { get; }
+
+    /// <summary>Gets the rejected operation description.</summary>
+    public string Operation { get; }
+}
+
+/// <summary>
 /// Indicates that a compute expression could not be compiled.
 /// </summary>
 public sealed class ComputeCompilationException : ComputeException

@@ -22,6 +22,27 @@ internal sealed class GpuComputeBackend : IComputeBackend
     internal static bool HasHardwareAccelerator =>
         HardwareAcceleratorAvailable.Value;
 
+    internal static bool TryGetAutomaticMemoryBudget(
+        ComputeContext? context,
+        long? requestedBudget,
+        out long budget)
+    {
+        if (context is not null)
+        {
+            budget = context.GetAutomaticMemoryBudget(requestedBudget);
+            return true;
+        }
+
+        if (!HasHardwareAccelerator)
+        {
+            budget = 0;
+            return false;
+        }
+
+        budget = SharedContext.Value.GetAutomaticMemoryBudget(requestedBudget);
+        return true;
+    }
+
     private GpuComputeBackend()
     {
     }

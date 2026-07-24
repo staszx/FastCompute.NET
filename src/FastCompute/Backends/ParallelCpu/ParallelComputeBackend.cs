@@ -49,6 +49,60 @@ internal sealed class ParallelComputeBackend : IComputeBackend
             StopTiming(executionStarted, context.CollectDiagnostics));
     }
 
+    internal ComputeBackendExecution<float[]> ExecuteDelegateMap(
+        float[] source,
+        Func<float, float> operation,
+        ComputeExecutionContext context)
+    {
+        var destination = new float[source.Length];
+
+        long executionStarted = StartTiming(context.CollectDiagnostics);
+        ExecuteChunks(
+            source.Length,
+            context,
+            (start, end) =>
+            {
+                for (int index = start; index < end; index++)
+                {
+                    CheckCancellation(index - start, context.CancellationToken);
+                    destination[index] = operation(source[index]);
+                }
+            });
+
+        return new ComputeBackendExecution<float[]>(
+            destination,
+            TimeSpan.Zero,
+            StopTiming(executionStarted, context.CollectDiagnostics));
+    }
+
+    internal ComputeBackendExecution<float[]> ExecuteMapInPlace(
+        float[] source,
+        ComputeExpressionPlan plan,
+        ComputeExecutionContext context)
+    {
+        long compilationStarted = StartTiming(context.CollectDiagnostics);
+        Func<float, float> operation = CpuExpressionCompiler.CompileUnary(plan);
+        TimeSpan compilationTime = StopTiming(compilationStarted, context.CollectDiagnostics);
+
+        long executionStarted = StartTiming(context.CollectDiagnostics);
+        ExecuteChunks(
+            source.Length,
+            context,
+            (start, end) =>
+            {
+                for (int index = start; index < end; index++)
+                {
+                    CheckCancellation(index - start, context.CancellationToken);
+                    source[index] = operation(source[index]);
+                }
+            });
+
+        return new ComputeBackendExecution<float[]>(
+            source,
+            compilationTime,
+            StopTiming(executionStarted, context.CollectDiagnostics));
+    }
+
     public ComputeBackendExecution<float[]> ExecuteZip(
         float[] left,
         float[] right,

@@ -66,6 +66,45 @@ internal sealed class SimdComputeBackend : IComputeBackend
             StopTiming(executionStarted, context.CollectDiagnostics));
     }
 
+    internal ComputeBackendExecution<float[]> ExecuteMapInPlace(
+        float[] source,
+        ComputeExpressionPlan plan,
+        ComputeExecutionContext context)
+    {
+        long compilationStarted = StartTiming(context.CollectDiagnostics);
+        Func<Vector256<float>, Vector256<float>> vectorOperation =
+            SimdExpressionCompiler.CompileUnary(plan);
+        Func<float, float> scalarOperation =
+            CpuExpressionCompiler.CompileUnary(plan);
+        TimeSpan compilationTime =
+            StopTiming(compilationStarted, context.CollectDiagnostics);
+        int vectorizedLength =
+            source.Length - source.Length % Vector256<float>.Count;
+        ref float sourceReference =
+            ref MemoryMarshal.GetArrayDataReference(source);
+
+        long executionStarted = StartTiming(context.CollectDiagnostics);
+        for (int offset = 0; offset < vectorizedLength; offset += Vector256<float>.Count)
+        {
+            CheckCancellation(offset, context.CancellationToken);
+            Vector256<float> sourceVector =
+                Vector256.LoadUnsafe(ref sourceReference, (nuint)offset);
+            Vector256<float> result = vectorOperation(sourceVector);
+            result.StoreUnsafe(ref sourceReference, (nuint)offset);
+        }
+
+        for (int index = vectorizedLength; index < source.Length; index++)
+        {
+            CheckCancellation(index, context.CancellationToken);
+            source[index] = scalarOperation(source[index]);
+        }
+
+        return new ComputeBackendExecution<float[]>(
+            source,
+            compilationTime,
+            StopTiming(executionStarted, context.CollectDiagnostics));
+    }
+
     public ComputeBackendExecution<float[]> ExecuteZip(
         float[] left,
         float[] right,

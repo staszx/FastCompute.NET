@@ -1,24 +1,43 @@
 namespace FastCompute.Expressions;
 
+internal enum ComputeExpressionComplexity
+{
+    Simple,
+    Medium,
+    Heavy
+}
+
 internal static class ComputeExpressionClassifier
 {
     internal static int GetGpuThreshold(
         ComputeExpressionPlan? plan,
         ComputeThresholdOptions thresholds)
     {
+        return Classify(plan) switch
+        {
+            ComputeExpressionComplexity.Simple => thresholds.GpuSimpleThreshold,
+            ComputeExpressionComplexity.Medium => thresholds.GpuMediumThreshold,
+            ComputeExpressionComplexity.Heavy => thresholds.GpuHeavyThreshold,
+            _ => throw new ArgumentOutOfRangeException(nameof(plan))
+        };
+    }
+
+    internal static ComputeExpressionComplexity Classify(
+        ComputeExpressionPlan? plan)
+    {
         if (plan is null)
         {
-            return thresholds.GpuMediumThreshold;
+            return ComputeExpressionComplexity.Medium;
         }
 
         if (ContainsHeavyFunction(plan.Root))
         {
-            return thresholds.GpuHeavyThreshold;
+            return ComputeExpressionComplexity.Heavy;
         }
 
         return ContainsFunction(plan.Root)
-            ? thresholds.GpuMediumThreshold
-            : thresholds.GpuSimpleThreshold;
+            ? ComputeExpressionComplexity.Medium
+            : ComputeExpressionComplexity.Simple;
     }
 
     private static bool ContainsHeavyFunction(ComputeNode node) => node switch

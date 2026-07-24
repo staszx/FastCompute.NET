@@ -16,6 +16,9 @@ namespace FastCompute;
 /// </summary>
 public sealed class ComputeContext : IDisposable
 {
+    private const long AutoMemoryBudgetNumerator = 3;
+    private const long AutoMemoryBudgetDenominator = 4;
+
     private readonly IlGpuContext ilGpuContext;
     private readonly Accelerator accelerator;
     private readonly GpuFloatMemoryPool memoryPool;
@@ -48,6 +51,16 @@ public sealed class ComputeContext : IDisposable
         {
             ThrowIfDisposed();
             return accelerator.Name;
+        }
+    }
+
+    /// <summary>Gets the total accelerator memory reported by ILGPU.</summary>
+    public long DeviceMemorySize
+    {
+        get
+        {
+            ThrowIfDisposed();
+            return accelerator.MemorySize;
         }
     }
 
@@ -561,6 +574,17 @@ public sealed class ComputeContext : IDisposable
         ObjectDisposedException.ThrowIf(
             Volatile.Read(ref disposed) != 0,
             this);
+    }
+
+    internal long GetAutomaticMemoryBudget(long? requestedBudget)
+    {
+        ThrowIfDisposed();
+        long safeDeviceBudget =
+            accelerator.MemorySize / AutoMemoryBudgetDenominator *
+            AutoMemoryBudgetNumerator;
+        return requestedBudget is long requested
+            ? Math.Min(requested, safeDeviceBudget)
+            : safeDeviceBudget;
     }
 
     internal void Download<T>(

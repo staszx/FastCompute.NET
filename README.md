@@ -24,9 +24,38 @@ float maximum = Compute.Max(mapped);
 float average = Compute.Average(mapped);
 ```
 
+Arbitrary .NET methods and captured reference objects can be executed directly
+on Scalar or Parallel CPU without conversion to the compute IR:
+
+```csharp
+float Transform(float value) => MathF.Sin(value) + CustomCalculation(value);
+
+float[] delegated = Compute.RunDelegate(
+    source,
+    Transform,
+    new ComputeOptions { Backend = ComputeBackendKind.ParallelCpu });
+
+Compute.RunInPlace(
+    source,
+    value => value * 2.0f + 1.0f);
+
+float[] gpuResult = source.RunExplicit(
+    value => GpuMath.Sin(value),
+    new ComputeOptions
+    {
+        Backend = ComputeBackendKind.Gpu,
+        GpuContext = context
+    });
+```
+
 ## Current capabilities
 
 - unary `Compute.Run`;
+- in-place unary `Compute.RunInPlace` on Scalar, Parallel CPU, and SIMD;
+- LINQ-style `float[]` extensions with mandatory explicit backend selection
+  through `RunExplicit`;
+- arbitrary user delegates through `Compute.RunDelegate` on Scalar and
+  Parallel CPU;
 - binary `Compute.Zip`;
 - `Compute.Sum`;
 - `Compute.Min`, `Compute.Max`, and `Compute.Average`;
@@ -39,6 +68,7 @@ float average = Compute.Average(mapped);
 - chunked Parallel CPU execution;
 - AVX `Vector256<float>` Map, Zip, Sum, Min, Max, and Average execution;
 - automatic Scalar/SIMD/Parallel selection;
+- transfer-conservative and memory-budgeted automatic GPU selection;
 - explicit ILGPU Map, Zip, and reduction execution;
 - reusable `ComputeContext` adapted from HDRLib's GPU context;
 - lazy GPU-resident `ComputeBuffer<float>` execution graphs;
@@ -53,8 +83,9 @@ float average = Compute.Average(mapped);
 - BenchmarkDotNet scenarios for the required data sizes;
 - cancellation and explicit backend validation.
 
-Captured reference objects and `double`/`int` array element types are planned
-for later stages.
+Captured reference objects remain unsupported in the expression API, but can
+be used by `RunDelegate`. `double`/`int` array element types are planned for
+later stages.
 
 See [Stage 1 architecture](docs/stage-1-architecture.md) and
 [Stage 2 architecture](docs/stage-2-architecture.md) for the internal flow,
@@ -74,6 +105,10 @@ selection are documented in
 The implemented graph ownership and materialization model, together with the
 remaining conservative fusion boundaries, are documented in
 [Stage 6 execution graph plan](docs/stage-6-execution-graph-plan.md).
+
+Backend-specific user delegates, in-place execution, chunked GPU processing,
+and the transfer- and memory-aware Auto planner are specified in the
+[additional technical requirements](docs/additional-requirements.md).
 
 ## Console sample
 
@@ -108,8 +143,8 @@ float[] result = Compute.Run(
 
 ## Performance gate
 
-The opt-in performance gate compares `Compute.Run` in Auto mode with an
-equivalent single-threaded `for` loop on large simple and heavy map workloads:
+The opt-in performance gate compares Auto mode with an equivalent
+single-threaded `for` loop on large simple, heavy, and in-place map workloads:
 
 ```powershell
 dotnet run --project benchmarks/FastCompute.Benchmarks `

@@ -8,7 +8,7 @@ specification for `float` arrays:
 - `Add`, `Subtract`, `Multiply`, and `Divide`;
 - `GpuMath.Min`, `GpuMath.Max`, `GpuMath.Abs`, and `GpuMath.Clamp`;
 - unary negation;
-- Map, Zip, Sum, Min, Max, and Average;
+- Map, in-place Map, Zip, Sum, Min, Max, and Average;
 - scalar processing of the final incomplete vector.
 
 It uses `Vector256<float>` and `System.Runtime.Intrinsics.X86.Avx`. AVX2 does
@@ -25,6 +25,10 @@ resulting delegate for groups of eight floats.
 The scalar CPU compiler builds a second delegate for the zero to seven trailing
 elements. This keeps arbitrary array lengths valid without reading beyond a
 buffer.
+
+In-place Map loads each complete vector before writing the computed vector
+back to the same location. The scalar tail is then overwritten element by
+element. This is safe because unary Map plans have no cross-index dependencies.
 
 `Min` and `Max` add handling for NaN and signed zero so their result matches the
 scalar `GpuMath` contract rather than the raw AVX operand-selection behavior.
@@ -60,6 +64,7 @@ default threshold of 100,000 elements.
 The tests cover:
 
 - SIMD/Scalar parity for Map and Zip;
+- in-place Map parity and scalar tails;
 - scalar tails;
 - Sum reduction;
 - empty and single-element arrays;

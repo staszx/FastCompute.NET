@@ -44,6 +44,12 @@ public sealed class ComputeOptions
     public ComputeThresholdOptions Thresholds { get; init; } = new();
 
     /// <summary>
+    /// Gets an optional upper bound for memory used by one automatic GPU
+    /// operation. The effective budget never exceeds the context safety limit.
+    /// </summary>
+    public long? GpuMemoryBudgetBytes { get; init; }
+
+    /// <summary>
     /// Gets the reusable GPU context. When omitted for an explicit GPU operation,
     /// FastCompute uses its lazily created shared default context.
     /// </summary>

@@ -42,6 +42,37 @@ public sealed class DiagnosticsTests
         Assert.That(result.Diagnostics.Backend, Is.EqualTo(ComputeBackendKind.ParallelCpu));
     }
 
+    [Test]
+    public void Auto_DoesNotSelectGpuForSimpleCpuResidentExpressionByDefault()
+    {
+        float[] source = new float[4_096];
+
+        ComputeResult<float[]> result =
+            Compute.RunWithDiagnostics(source, value => value + 2.0f);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Diagnostics.Backend, Is.Not.EqualTo(ComputeBackendKind.Gpu));
+            Assert.That(
+                result.Diagnostics.BackendSelectionReason,
+                Does.Contain("disabled by default"));
+            Assert.That(result.Diagnostics.EstimatedGpuMemoryBytes, Is.Null);
+        });
+    }
+
+    [Test]
+    public void GpuWorkingSetEstimate_RejectsFourGibibyteOneShotMapOnFourGibibyteGpu()
+    {
+        const int elementCount = 1024 * 1024 * 1024;
+
+        long workingSet =
+            Compute.EstimateGpuWorkingSetBytes(
+                parameterCount: 1,
+                elementCount);
+
+        Assert.That(workingSet, Is.GreaterThan(8L * 1024 * 1024 * 1024));
+    }
+
     [TestCase(0)]
     [TestCase(-1)]
     public void InvalidMaximumParallelism_IsRejected(int maximumParallelism)
@@ -61,6 +92,19 @@ public sealed class DiagnosticsTests
         var options = new ComputeOptions
         {
             Thresholds = new ComputeThresholdOptions { ParallelThreshold = -1 }
+        };
+
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => Compute.Run([1.0f], value => value, options));
+    }
+
+    [TestCase(0L)]
+    [TestCase(-1L)]
+    public void InvalidGpuMemoryBudget_IsRejected(long memoryBudget)
+    {
+        var options = new ComputeOptions
+        {
+            GpuMemoryBudgetBytes = memoryBudget
         };
 
         Assert.Throws<ArgumentOutOfRangeException>(

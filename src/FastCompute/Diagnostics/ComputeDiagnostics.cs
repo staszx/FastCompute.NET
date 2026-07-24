@@ -19,4 +19,17 @@ public sealed record ComputeDiagnostics(
     TimeSpan ExecutionTime,
     TimeSpan DownloadTime,
     bool KernelCacheHit,
-    string? DeviceName);
+    string? DeviceName)
+{
+    /// <summary>Gets a human-readable explanation of backend selection.</summary>
+    public string? BackendSelectionReason { get; init; }
+
+    /// <summary>Gets the estimated GPU working set considered by Auto.</summary>
+    public long? EstimatedGpuMemoryBytes { get; init; }
+
+    /// <summary>Gets the effective GPU memory budget considered by Auto.</summary>
+    public long? GpuMemoryBudgetBytes { get; init; }
+
+    /// <summary>Gets a value indicating whether execution reused the input array.</summary>
+    public bool IsInPlace { get; init; }
+}
