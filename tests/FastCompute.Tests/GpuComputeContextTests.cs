@@ -71,6 +71,25 @@ public sealed class GpuComputeContextTests
     }
 
     [Test]
+    public void Run_SnapshotsCapturedPrimitiveForEachGpuPlan()
+    {
+        using ComputeContext context = CreateTestContext();
+        float multiplier = 2.0f;
+        Expression<Func<float, float>> expression =
+            value => value * multiplier;
+
+        float[] first = context.Run([1.0f, 2.0f], expression);
+        multiplier = 3.0f;
+        float[] second = context.Run([1.0f, 2.0f], expression);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(first, Is.EqualTo(new[] { 2.0f, 4.0f }).Within(1e-5f));
+            Assert.That(second, Is.EqualTo(new[] { 3.0f, 6.0f }).Within(1e-5f));
+        });
+    }
+
+    [Test]
     public void PreparedOperation_ThrowsAfterContextIsDisposed()
     {
         ComputeContext context = CreateTestContext();
@@ -159,6 +178,189 @@ public sealed class GpuComputeContextTests
             doubled.Zip(right, (x, y) => x + y);
 
         Assert.That(result.Download(), Is.EqualTo(new[] { 6f, 9f, 12f }));
+    }
+
+    [Test]
+    public void ResidentBufferGraph_IsLazyUntilMaterialization()
+    {
+        using ComputeContext context = CreateTestContext();
+        Expression<Func<float, float>> expression =
+            value => value * 2.0f;
+        using ComputeBuffer<float> source =
+            context.Upload(new[] { 1.0f, 2.0f });
+        using ComputeBuffer<float> result = source.Select(expression);
+
+        Assert.That(result.Length, Is.EqualTo(2));
+        ComputeCompilationResult compilation = context.Precompile(expression);
+
+        Assert.That(compilation.CacheHit, Is.False);
+        Assert.That(result.Download(), Is.EqualTo(new[] { 2.0f, 4.0f }));
+    }
+
+    [Test]
+    public void Download_CopiesIntoExistingSpan()
+    {
+        using ComputeContext context = CreateTestContext();
+        using ComputeBuffer<float> source =
+            context.Upload(new[] { 1.0f, 2.0f, 3.0f });
+        using ComputeBuffer<float> result =
+            source.Select(value => value * 2.0f);
+        float[] destination = [-1.0f, 0.0f, 0.0f, 0.0f, -1.0f];
+
+        result.Download(destination.AsSpan(1, 3));
+
+        Assert.That(
+            destination,
+            Is.EqualTo(new[] { -1.0f, 2.0f, 4.0f, 6.0f, -1.0f }));
+    }
+
+    [Test]
+    public void Download_RejectsDestinationThatIsTooShort()
+    {
+        using ComputeContext context = CreateTestContext();
+        using ComputeBuffer<float> source =
+            context.Upload(new[] { 1.0f, 2.0f, 3.0f });
+        float[] destination = new float[2];
+
+        ArgumentException exception = Assert.Throws<ArgumentException>(
+            () => source.Download(destination.AsSpan()))!;
+
+        Assert.That(exception.ParamName, Is.EqualTo("destination"));
+        Assert.That(source.Download(), Is.EqualTo(new[] { 1.0f, 2.0f, 3.0f }));
+    }
+
+    [Test]
+    public void EmptyResidentBuffer_SupportsDownloadMapAndZip()
+    {
+        using ComputeContext context = CreateTestContext();
+        using ComputeBuffer<float> empty =
+            context.Upload(Array.Empty<float>());
+        using ComputeBuffer<float> mapped =
+            empty.Select(value => value * 2.0f);
+        using ComputeBuffer<float> zipped =
+            mapped.Zip(empty, (left, right) => left + right);
+
+        zipped.Download(Span<float>.Empty);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(empty.Length, Is.Zero);
+            Assert.That(mapped.Download(), Is.Empty);
+            Assert.That(zipped.Download(), Is.Empty);
+        });
+    }
+
+    [Test]
+    public void ResidentBufferGraph_RetainsSourceAfterSourceHandleIsDisposed()
+    {
+        using ComputeContext context = CreateTestContext();
+        ComputeBuffer<float> source =
+            context.Upload(new[] { 1.0f, 2.0f, 3.0f });
+        using ComputeBuffer<float> result = source
+            .Select(value => value * 2.0f)
+            .Select(value => value + 1.0f);
+
+        source.Dispose();
+
+        Assert.That(
+            result.Download(),
+            Is.EqualTo(new[] { 3.0f, 5.0f, 7.0f }).Within(1e-5f));
+    }
+
+    [Test]
+    public void ResidentBufferGraph_SupportsBranchesFromDisposedSourceHandle()
+    {
+        using ComputeContext context = CreateTestContext();
+        ComputeBuffer<float> source =
+            context.Upload(new[] { 1.0f, 2.0f, 3.0f });
+        using ComputeBuffer<float> doubled =
+            source.Select(value => value * 2.0f);
+        using ComputeBuffer<float> tripled =
+            source.Select(value => value * 3.0f);
+
+        source.Dispose();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                doubled.Download(),
+                Is.EqualTo(new[] { 2.0f, 4.0f, 6.0f }).Within(1e-5f));
+            Assert.That(
+                tripled.Download(),
+                Is.EqualTo(new[] { 3.0f, 6.0f, 9.0f }).Within(1e-5f));
+        });
+    }
+
+    [Test]
+    public void ResidentBufferGraph_MaterializesOnceForConcurrentDownloads()
+    {
+        using ComputeContext context = CreateTestContext();
+        using ComputeBuffer<float> source =
+            context.Upload(
+                Enumerable.Range(0, 4_096)
+                    .Select(index => (float)index)
+                    .ToArray());
+        using ComputeBuffer<float> result = source
+            .Select(value => value * 2.0f)
+            .Select(value => value + 1.0f);
+
+        Task<float[]>[] downloads = Enumerable.Range(0, 4)
+            .Select(_ => Task.Run(result.Download))
+            .ToArray();
+        Task.WaitAll(downloads);
+
+        Assert.That(
+            downloads.Select(download => download.Result[^1]),
+            Is.All.EqualTo(8_191.0f).Within(1e-5f));
+    }
+
+    [Test]
+    public void ResidentBufferGraph_DisposedUnmaterializedBranchDoesNotInvalidateSource()
+    {
+        using ComputeContext context = CreateTestContext();
+        using ComputeBuffer<float> source =
+            context.Upload(new[] { 1.0f, 2.0f });
+        ComputeBuffer<float> unused =
+            source.Select(value => value * 2.0f);
+
+        unused.Dispose();
+
+        Assert.That(source.Download(), Is.EqualTo(new[] { 1.0f, 2.0f }));
+        Assert.That(
+            () => unused.Download(),
+            Throws.TypeOf<ObjectDisposedException>());
+    }
+
+    [Test]
+    public void ResidentBufferGraph_CanBeDisposedAfterContext()
+    {
+        ComputeContext context = CreateTestContext();
+        ComputeBuffer<float> source =
+            context.Upload(new[] { 1.0f, 2.0f });
+        ComputeBuffer<float> result =
+            source.Select(value => value * 2.0f);
+
+        context.Dispose();
+
+        Assert.That(
+            () => result.Download(),
+            Throws.TypeOf<ObjectDisposedException>());
+        Assert.DoesNotThrow(result.Dispose);
+        Assert.DoesNotThrow(source.Dispose);
+    }
+
+    [Test]
+    public void DownloadSpan_ThrowsAfterBufferIsDisposed()
+    {
+        using ComputeContext context = CreateTestContext();
+        ComputeBuffer<float> source =
+            context.Upload(new[] { 1.0f });
+        float[] destination = new float[1];
+        source.Dispose();
+
+        Assert.That(
+            () => source.Download(destination.AsSpan()),
+            Throws.TypeOf<ObjectDisposedException>());
     }
 
     [Test]

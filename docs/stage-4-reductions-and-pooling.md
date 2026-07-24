@@ -18,6 +18,24 @@ Scalar, Parallel CPU, SIMD, and GPU backends implement all four operations.
 Floating-point reduction order can differ between backends, so Sum and Average
 are compared with a tolerance.
 
+GPU-resident buffers expose the same reductions without downloading the input
+array:
+
+```csharp
+using ComputeBuffer<float> input = context.Upload(source);
+using ComputeBuffer<float> transformed =
+    input.Select(value => GpuMath.Sin(value));
+
+float sum = transformed.Sum();
+float minimum = transformed.Min();
+float maximum = transformed.Max();
+float average = transformed.Average();
+```
+
+The lazy graph is materialized on the accelerator, the existing multi-stage
+reduction kernel consumes that device allocation directly, and only the final
+scalar is copied to CPU memory.
+
 ## GPU reduction
 
 The GPU backend uses a multi-stage reduction without a global atomic:
@@ -88,3 +106,28 @@ Heavy Map Auto / for:  0.146
 Simple Map Auto / for: 0.818
 Required maximum:       1.050
 ```
+
+## Captured primitive constants
+
+The expression parser snapshots captured `float`, `double`, and `int` local
+values while creating each execution plan. Explicit conversions from captured
+`double` and `int` values to `float` become float constants in the
+backend-independent IR.
+
+A conditional controlled by a captured `bool` is resolved during planning:
+
+```csharp
+float multiplier = 2.0f;
+bool negate = false;
+
+float[] result = Compute.Run(
+    source,
+    value => negate ? -(value * multiplier) : value * multiplier);
+```
+
+Changing a captured local affects the next newly planned call. A
+`PreparedCompute<T>` snapshots the value when the operation is prepared.
+
+Captured reference objects remain rejected. FastCompute does not invoke
+arbitrary property getters or traverse object graphs while planning an
+expression.

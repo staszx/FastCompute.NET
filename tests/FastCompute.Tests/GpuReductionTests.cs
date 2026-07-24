@@ -64,6 +64,81 @@ public sealed class GpuReductionTests
     }
 
     [Test]
+    public void ResidentBufferReductions_ConsumeMaterializedGraphOnCuda()
+    {
+        using ComputeContext context = CreateCudaContext();
+        float[] source = CreateSource(70_003);
+        float[] expected = source
+            .Select(value => value * 0.5f + 1.0f)
+            .ToArray();
+        var scalarOptions = new ComputeOptions
+        {
+            Backend = ComputeBackendKind.Scalar
+        };
+        using ComputeBuffer<float> input = context.Upload(source);
+        using ComputeBuffer<float> transformed =
+            input.Select(value => value * 0.5f + 1.0f);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                transformed.Sum(),
+                Is.EqualTo(Compute.Sum(expected, scalarOptions)).Within(2e-2f));
+            Assert.That(
+                transformed.Min(),
+                Is.EqualTo(Compute.Min(expected, scalarOptions)));
+            Assert.That(
+                transformed.Max(),
+                Is.EqualTo(Compute.Max(expected, scalarOptions)));
+            Assert.That(
+                transformed.Average(),
+                Is.EqualTo(Compute.Average(expected, scalarOptions)).Within(1e-5f));
+        });
+    }
+
+    [Test]
+    public void ResidentBufferReductions_HandleEmptySingleAndNaN()
+    {
+        using ComputeContext context = CreateCudaContext();
+        using ComputeBuffer<float> empty = context.Upload(Array.Empty<float>());
+        using ComputeBuffer<float> single = context.Upload(new[] { 4.0f });
+        using ComputeBuffer<float> withNaN =
+            context.Upload(new[] { 1.0f, float.NaN, 2.0f });
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(empty.Sum(), Is.EqualTo(0.0f));
+            Assert.That(
+                empty.Min,
+                Throws.TypeOf<InvalidOperationException>());
+            Assert.That(
+                empty.Max,
+                Throws.TypeOf<InvalidOperationException>());
+            Assert.That(
+                empty.Average,
+                Throws.TypeOf<InvalidOperationException>());
+            Assert.That(single.Sum(), Is.EqualTo(4.0f));
+            Assert.That(single.Min(), Is.EqualTo(4.0f));
+            Assert.That(single.Max(), Is.EqualTo(4.0f));
+            Assert.That(single.Average(), Is.EqualTo(4.0f));
+            Assert.That(float.IsNaN(withNaN.Min()), Is.True);
+            Assert.That(float.IsNaN(withNaN.Max()), Is.True);
+        });
+    }
+
+    [Test]
+    public void ResidentBufferReduction_ThrowsAfterDispose()
+    {
+        using ComputeContext context = CreateCudaContext();
+        ComputeBuffer<float> source = context.Upload(new[] { 1.0f });
+        source.Dispose();
+
+        Assert.That(
+            source.Sum,
+            Throws.TypeOf<ObjectDisposedException>());
+    }
+
+    [Test]
     public void PrecompileReduction_CachesReductionTemplate()
     {
         using ComputeContext context = CreateCudaContext();

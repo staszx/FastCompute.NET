@@ -1,5 +1,5 @@
 using System.Linq.Expressions;
-using ILGPU;
+using FastCompute.Gpu;
 using ILGPU.Runtime;
 
 namespace FastCompute;
@@ -11,25 +11,66 @@ public sealed class ComputeBuffer<T> : IDisposable
     where T : unmanaged
 {
     private readonly ComputeContext context;
-    private MemoryBuffer1D<T, Stride1D.Dense>? buffer;
+    private ComputeBufferNode<T>? node;
 
     internal ComputeBuffer(
         ComputeContext context,
-        MemoryBuffer1D<T, Stride1D.Dense> buffer)
+        ComputeBufferNode<T> node)
     {
         this.context = context;
-        this.buffer = buffer;
+        this.node = node;
+    }
+
+    /// <summary>Releases an undisposed buffer handle.</summary>
+    ~ComputeBuffer()
+    {
+        ReleaseNode();
     }
 
     /// <summary>Gets the number of elements in the buffer.</summary>
-    public int Length => checked((int)GetBuffer().Length);
+    public int Length
+    {
+        get
+        {
+            ComputeBufferNode<T> current = AcquireNode();
+            try
+            {
+                return current.Length;
+            }
+            finally
+            {
+                current.Release();
+            }
+        }
+    }
 
     /// <summary>Downloads the buffer to a new managed array.</summary>
     public T[] Download()
     {
         context.ThrowIfDisposed();
-        return GetBuffer().GetAsArray1D();
+        ComputeBufferNode<T> current = AcquireNode();
+        try
+        {
+            if (current.Length == 0)
+            {
+                return [];
+            }
+
+            return current.GetBuffer().GetAsArray1D();
+        }
+        finally
+        {
+            current.Release();
+        }
     }
+
+    /// <summary>Downloads the buffer into an existing destination span.</summary>
+    /// <param name="destination">
+    /// The destination whose length must be at least <see cref="Length"/>.
+    /// </param>
+    /// <exception cref="ArgumentException">The destination is too short.</exception>
+    public void Download(Span<T> destination) =>
+        context.Download(this, destination);
 
     /// <summary>Runs a map expression and keeps its result on the accelerator.</summary>
     public ComputeBuffer<T> Select(Expression<Func<T, T>> expression)
@@ -50,16 +91,43 @@ public sealed class ComputeBuffer<T> : IDisposable
         return context.Zip(this, right, expression);
     }
 
+    /// <summary>Computes the sum while keeping the input on the accelerator.</summary>
+    public T Sum() => context.Reduce(this, ComputeReductionKind.Sum);
+
+    /// <summary>Computes the minimum while keeping the input on the accelerator.</summary>
+    /// <exception cref="InvalidOperationException">The buffer is empty.</exception>
+    public T Min() => context.Reduce(this, ComputeReductionKind.Min);
+
+    /// <summary>Computes the maximum while keeping the input on the accelerator.</summary>
+    /// <exception cref="InvalidOperationException">The buffer is empty.</exception>
+    public T Max() => context.Reduce(this, ComputeReductionKind.Max);
+
+    /// <summary>Computes the arithmetic mean while keeping the input on the accelerator.</summary>
+    /// <exception cref="InvalidOperationException">The buffer is empty.</exception>
+    public T Average() => context.Reduce(this, ComputeReductionKind.Average);
+
     /// <inheritdoc />
     public void Dispose()
     {
-        MemoryBuffer1D<T, Stride1D.Dense>? owned =
-            Interlocked.Exchange(ref buffer, null);
-        owned?.Dispose();
+        ReleaseNode();
+        GC.SuppressFinalize(this);
+    }
+
+    private void ReleaseNode()
+    {
+        ComputeBufferNode<T>? owned =
+            Interlocked.Exchange(ref node, null);
+        owned?.Release();
     }
 
     internal ComputeContext Context => context;
 
-    internal MemoryBuffer1D<T, Stride1D.Dense> GetBuffer() =>
-        buffer ?? throw new ObjectDisposedException(GetType().Name);
+    internal ComputeBufferNode<T> AcquireNode()
+    {
+        ComputeBufferNode<T> current =
+            Volatile.Read(ref node) ??
+            throw new ObjectDisposedException(GetType().Name);
+        current.Acquire();
+        return current;
+    }
 }

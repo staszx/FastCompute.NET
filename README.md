@@ -31,6 +31,8 @@ float average = Compute.Average(mapped);
 - `Compute.Sum`;
 - `Compute.Min`, `Compute.Max`, and `Compute.Average`;
 - arithmetic and the MVP `GpuMath` functions;
+- captured `float`, `double`, and `int` local constants, plus captured `bool`
+  branch selection;
 - expression validation and backend-independent IR;
 - strict constant folding and IEEE-safe simplification;
 - single-threaded Scalar CPU execution;
@@ -39,7 +41,10 @@ float average = Compute.Average(mapped);
 - automatic Scalar/SIMD/Parallel selection;
 - explicit ILGPU Map, Zip, and reduction execution;
 - reusable `ComputeContext` adapted from HDRLib's GPU context;
-- GPU-resident `ComputeBuffer<float>` pipelines;
+- lazy GPU-resident `ComputeBuffer<float>` execution graphs;
+- reference-counted graph ownership and one-time materialization;
+- allocation-free `ComputeBuffer.Download(Span<T>)`;
+- GPU-resident `ComputeBuffer` Sum, Min, Max, and Average reductions;
 - multi-stage GPU reductions without a global atomic;
 - context-local transient GPU memory pooling;
 - thread-safe kernel and lowered-expression caches;
@@ -48,7 +53,8 @@ float average = Compute.Average(mapped);
 - BenchmarkDotNet scenarios for the required data sizes;
 - cancellation and explicit backend validation.
 
-Captured values and `double`/`int` support are planned for later stages.
+Captured reference objects and `double`/`int` array element types are planned
+for later stages.
 
 See [Stage 1 architecture](docs/stage-1-architecture.md) and
 [Stage 2 architecture](docs/stage-2-architecture.md) for the internal flow,
@@ -64,6 +70,20 @@ are documented in [SIMD backend architecture](docs/simd-architecture.md).
 Reductions, transient GPU memory pooling, CUDA validation, and GPU Auto
 selection are documented in
 [Stage 4 reductions and pooling](docs/stage-4-reductions-and-pooling.md).
+
+The implemented graph ownership and materialization model, together with the
+remaining conservative fusion boundaries, are documented in
+[Stage 6 execution graph plan](docs/stage-6-execution-graph-plan.md).
+
+## Console sample
+
+The sample demonstrates Auto selection, diagnostics, captured primitive
+constants, forced kernel-template precompilation, and GPU-resident pipelines:
+
+```powershell
+dotnet run --project samples/FastCompute.Sample.Console `
+  --configuration Release
+```
 
 ## GPU precompilation
 

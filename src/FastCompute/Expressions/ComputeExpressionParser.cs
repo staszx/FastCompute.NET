@@ -1,4 +1,6 @@
 using System.Linq.Expressions;
+using System.Reflection;
+using System.Runtime.CompilerServices;
 
 namespace FastCompute.Expressions;
 
@@ -51,6 +53,11 @@ internal static class ComputeExpressionParser
         Expression expression,
         IReadOnlyDictionary<ParameterExpression, int> parameterIndexes)
     {
+        if (TryParseFloatConstant(expression, out ConstantNode constant))
+        {
+            return constant;
+        }
+
         if (expression.Type != typeof(float))
         {
             throw Unsupported(expression, "Every value inside a compute expression must have type float.");
@@ -59,13 +66,14 @@ internal static class ComputeExpressionParser
         return expression switch
         {
             ParameterExpression parameter => ParseParameter(parameter, parameterIndexes),
-            ConstantExpression constant => new ConstantNode((float)constant.Value!),
             BinaryExpression binary => ParseBinary(binary, parameterIndexes),
             UnaryExpression unary => ParseUnary(unary, parameterIndexes),
             MethodCallExpression call => ParseMethodCall(call, parameterIndexes),
+            ConditionalExpression conditional => ParseConditional(conditional, parameterIndexes),
             MemberExpression => throw Unsupported(
                 expression,
-                "Captured values and access to object members are not supported in this implementation stage."),
+                "Only captured float, double, int, and bool local values are supported. " +
+                "Access to members of captured reference objects is not supported."),
             _ => throw Unsupported(
                 expression,
                 $"Expression node '{expression.NodeType}' is not supported.")
@@ -142,6 +150,99 @@ internal static class ComputeExpressionParser
 
         return new FunctionNode(function.Function, arguments);
     }
+
+    private static ComputeNode ParseConditional(
+        ConditionalExpression expression,
+        IReadOnlyDictionary<ParameterExpression, int> parameterIndexes)
+    {
+        if (!TryReadCapturedPrimitive(expression.Test, out object? value) ||
+            value is not bool condition)
+        {
+            throw Unsupported(
+                expression.Test,
+                "Only conditionals controlled by a captured bool local value are supported.");
+        }
+
+        return ParseNode(
+            condition ? expression.IfTrue : expression.IfFalse,
+            parameterIndexes);
+    }
+
+    private static bool TryParseFloatConstant(
+        Expression expression,
+        out ConstantNode constant)
+    {
+        Expression valueExpression = expression;
+        if (expression is UnaryExpression
+            {
+                NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked,
+                Type: not null
+            } conversion &&
+            conversion.Type == typeof(float))
+        {
+            valueExpression = conversion.Operand;
+        }
+
+        if (expression.Type != typeof(float) ||
+            !TryReadCapturedPrimitive(valueExpression, out object? value))
+        {
+            constant = null!;
+            return false;
+        }
+
+        float converted = value switch
+        {
+            float floatValue => floatValue,
+            double doubleValue => (float)doubleValue,
+            int intValue => intValue,
+            _ => default
+        };
+
+        if (value is not (float or double or int))
+        {
+            constant = null!;
+            return false;
+        }
+
+        constant = new ConstantNode(converted);
+        return true;
+    }
+
+    private static bool TryReadCapturedPrimitive(
+        Expression expression,
+        out object? value)
+    {
+        if (expression is ConstantExpression constant &&
+            IsSupportedCapturedType(constant.Type))
+        {
+            value = constant.Value;
+            return true;
+        }
+
+        if (expression is not MemberExpression
+            {
+                Expression: ConstantExpression owner,
+                Member: FieldInfo field
+            } ||
+            owner.Value is null ||
+            !owner.Value.GetType().IsDefined(
+                typeof(CompilerGeneratedAttribute),
+                inherit: false) ||
+            !IsSupportedCapturedType(field.FieldType))
+        {
+            value = null;
+            return false;
+        }
+
+        value = field.GetValue(owner.Value);
+        return true;
+    }
+
+    private static bool IsSupportedCapturedType(Type type) =>
+        type == typeof(float) ||
+        type == typeof(double) ||
+        type == typeof(int) ||
+        type == typeof(bool);
 
     private static GpuExpressionNotSupportedException Unsupported(
         Expression expression,

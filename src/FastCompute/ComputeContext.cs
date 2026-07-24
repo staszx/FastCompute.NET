@@ -88,7 +88,18 @@ public sealed class ComputeContext : IDisposable
         ArgumentNullException.ThrowIfNull(source);
         ThrowIfDisposed();
         ValidateElementType(typeof(T));
-        return new ComputeBuffer<T>(this, accelerator.Allocate1D(source));
+        if (source.Length == 0)
+        {
+            return new ComputeBuffer<T>(
+                this,
+                new BufferSourceNode<T>(this, length: 0));
+        }
+
+        MemoryBuffer1D<T, Stride1D.Dense> buffer =
+            accelerator.Allocate1D(source);
+        return new ComputeBuffer<T>(
+            this,
+            new BufferSourceNode<T>(this, buffer));
     }
 
     /// <summary>
@@ -334,36 +345,15 @@ public sealed class ComputeContext : IDisposable
             TimeSpan uploadTime =
                 StopTiming(uploadStarted, executionContext.CollectDiagnostics);
 
-            MemoryBuffer1D<float, Stride1D.Dense> current = sourceBuffer;
-            int currentLength = source.Length;
-            int kernelReduction = reduction == ComputeReductionKind.Average
-                ? (int)ComputeReductionKind.Sum
-                : (int)reduction;
-
             long executionStarted =
                 StartTiming(executionContext.CollectDiagnostics);
-            while (currentLength > 1)
-            {
-                int outputLength =
-                    (currentLength + GpuKernels.ReductionElementsPerOutput - 1) /
-                    GpuKernels.ReductionElementsPerOutput;
-                GpuFloatMemoryPool.Lease outputLease =
-                    memoryPool.Rent(outputLength);
-                leases.Add(outputLease);
-                MemoryBuffer1D<float, Stride1D.Dense> output =
-                    outputLease.Buffer;
-
-                kernel.Reduction!(
-                    outputLength,
-                    current.View,
-                    output.View,
-                    currentLength,
-                    kernelReduction);
-                current = output;
-                currentLength = outputLength;
-            }
-
-            accelerator.Synchronize();
+            MemoryBuffer1D<float, Stride1D.Dense> current =
+                ExecuteReductionPasses(
+                    sourceBuffer,
+                    source.Length,
+                    reduction,
+                    kernel,
+                    leases);
             TimeSpan executionTime =
                 StopTiming(executionStarted, executionContext.CollectDiagnostics);
             executionContext.CancellationToken.ThrowIfCancellationRequested();
@@ -390,10 +380,54 @@ public sealed class ComputeContext : IDisposable
         }
         finally
         {
-            for (int index = leases.Count - 1; index >= 0; index--)
-            {
-                leases[index].Dispose();
-            }
+            ReturnLeases(leases);
+        }
+    }
+
+    private MemoryBuffer1D<float, Stride1D.Dense> ExecuteReductionPasses(
+        MemoryBuffer1D<float, Stride1D.Dense> source,
+        int sourceLength,
+        ComputeReductionKind reduction,
+        CompiledKernel kernel,
+        List<GpuFloatMemoryPool.Lease> leases)
+    {
+        MemoryBuffer1D<float, Stride1D.Dense> current = source;
+        int currentLength = sourceLength;
+        int kernelReduction = reduction == ComputeReductionKind.Average
+            ? (int)ComputeReductionKind.Sum
+            : (int)reduction;
+
+        while (currentLength > 1)
+        {
+            int outputLength =
+                (currentLength + GpuKernels.ReductionElementsPerOutput - 1) /
+                GpuKernels.ReductionElementsPerOutput;
+            GpuFloatMemoryPool.Lease outputLease =
+                memoryPool.Rent(outputLength);
+            leases.Add(outputLease);
+            MemoryBuffer1D<float, Stride1D.Dense> output =
+                outputLease.Buffer;
+
+            kernel.Reduction!(
+                outputLength,
+                current.View,
+                output.View,
+                currentLength,
+                kernelReduction);
+            current = output;
+            currentLength = outputLength;
+        }
+
+        accelerator.Synchronize();
+        return current;
+    }
+
+    private static void ReturnLeases(
+        List<GpuFloatMemoryPool.Lease> leases)
+    {
+        for (int index = leases.Count - 1; index >= 0; index--)
+        {
+            leases[index].Dispose();
         }
     }
 
@@ -529,6 +563,42 @@ public sealed class ComputeContext : IDisposable
             this);
     }
 
+    internal void Download<T>(
+        ComputeBuffer<T> source,
+        Span<T> destination)
+        where T : unmanaged
+    {
+        ThrowIfDisposed();
+        ValidateOwnedBuffer(source);
+        ValidateElementType(typeof(T));
+
+        ComputeBufferNode<T> sourceNode = source.AcquireNode();
+        try
+        {
+            if (destination.Length < sourceNode.Length)
+            {
+                throw new ArgumentException(
+                    $"The destination span must contain at least " +
+                    $"{sourceNode.Length} elements, but contains " +
+                    $"{destination.Length}.",
+                    nameof(destination));
+            }
+
+            if (sourceNode.Length == 0)
+            {
+                return;
+            }
+
+            sourceNode.GetBuffer().View.CopyToCPU(
+                accelerator.DefaultStream,
+                destination[..sourceNode.Length]);
+        }
+        finally
+        {
+            sourceNode.Release();
+        }
+    }
+
     internal ComputeBuffer<T> Select<T>(
         ComputeBuffer<T> source,
         Expression<Func<T, T>> expression)
@@ -538,30 +608,19 @@ public sealed class ComputeContext : IDisposable
         ValidateOwnedBuffer(source);
         ValidateElementType(typeof(T));
 
-        GpuProgram program = GetOrCreateProgram(expression, out _);
-        CompiledKernel kernel = GetOrCompileKernel(ComputeKernelKind.Map, out _);
-        MemoryBuffer1D<T, Stride1D.Dense> sourceBuffer = source.GetBuffer();
-        var floatSource =
-            (MemoryBuffer1D<float, Stride1D.Dense>)(object)sourceBuffer;
-        MemoryBuffer1D<float, Stride1D.Dense> destination =
-            accelerator.Allocate1D<float>(source.Length);
-
+        ComputeBufferNode<T> sourceNode = source.AcquireNode();
         try
         {
-            using MemoryBuffer1D<GpuInstruction, Stride1D.Dense> programBuffer =
-                accelerator.Allocate1D(program.Instructions);
-            kernel.Map!(
-                source.Length,
-                floatSource.View,
-                destination.View,
-                programBuffer.View,
-                program.Instructions.Length);
-            accelerator.Synchronize();
-            return (ComputeBuffer<T>)(object)new ComputeBuffer<float>(this, destination);
+            ComputeExpressionPlan plan =
+                StrictComputeOptimizer.Optimize(
+                    ComputeExpressionParser.Parse(expression));
+            return new ComputeBuffer<T>(
+                this,
+                new MapBufferNode<T>(this, sourceNode, plan));
         }
         catch
         {
-            destination.Dispose();
+            sourceNode.Release();
             throw;
         }
     }
@@ -577,39 +636,168 @@ public sealed class ComputeContext : IDisposable
         ValidateOwnedBuffer(right);
         ValidateElementType(typeof(T));
 
-        if (left.Length != right.Length)
+        ComputeBufferNode<T> leftNode = left.AcquireNode();
+        ComputeBufferNode<T>? rightNode = null;
+        try
         {
-            throw new ComputeBufferMismatchException(
-                $"Zip requires buffers of equal length, but received {left.Length} and {right.Length}.");
-        }
+            rightNode = right.AcquireNode();
+            if (leftNode.Length != rightNode.Length)
+            {
+                throw new ComputeBufferMismatchException(
+                    $"Zip requires buffers of equal length, but received " +
+                    $"{leftNode.Length} and {rightNode.Length}.");
+            }
 
-        GpuProgram program = GetOrCreateProgram(expression, out _);
+            ComputeExpressionPlan plan =
+                StrictComputeOptimizer.Optimize(
+                    ComputeExpressionParser.Parse(expression));
+            ComputeBuffer<T> result = new(
+                this,
+                new ZipBufferNode<T>(
+                    this,
+                    leftNode,
+                    rightNode,
+                    plan));
+            rightNode = null;
+            leftNode = null!;
+            return result;
+        }
+        finally
+        {
+            leftNode?.Release();
+            rightNode?.Release();
+        }
+    }
+
+    internal MemoryBuffer1D<T, Stride1D.Dense> ExecuteGraphMap<T>(
+        MemoryBuffer1D<T, Stride1D.Dense> source,
+        int length,
+        ComputeExpressionPlan plan)
+        where T : unmanaged
+    {
+        ThrowIfDisposed();
+        ValidateElementType(typeof(T));
+        GpuProgram program = GetOrCreateProgram(plan, out _);
+        CompiledKernel kernel = GetOrCompileKernel(ComputeKernelKind.Map, out _);
+        var floatSource =
+            (MemoryBuffer1D<float, Stride1D.Dense>)(object)source;
+        MemoryBuffer1D<float, Stride1D.Dense> destination =
+            accelerator.Allocate1D<float>(length);
+        try
+        {
+            using MemoryBuffer1D<GpuInstruction, Stride1D.Dense> programBuffer =
+                accelerator.Allocate1D(program.Instructions);
+            kernel.Map!(
+                length,
+                floatSource.View,
+                destination.View,
+                programBuffer.View,
+                program.Instructions.Length);
+            accelerator.Synchronize();
+            return (MemoryBuffer1D<T, Stride1D.Dense>)(object)destination;
+        }
+        catch
+        {
+            destination.Dispose();
+            throw;
+        }
+    }
+
+    internal MemoryBuffer1D<T, Stride1D.Dense> ExecuteGraphZip<T>(
+        MemoryBuffer1D<T, Stride1D.Dense> left,
+        MemoryBuffer1D<T, Stride1D.Dense> right,
+        int length,
+        ComputeExpressionPlan plan)
+        where T : unmanaged
+    {
+        ThrowIfDisposed();
+        ValidateElementType(typeof(T));
+        GpuProgram program = GetOrCreateProgram(plan, out _);
         CompiledKernel kernel = GetOrCompileKernel(ComputeKernelKind.Zip, out _);
         var floatLeft =
-            (MemoryBuffer1D<float, Stride1D.Dense>)(object)left.GetBuffer();
+            (MemoryBuffer1D<float, Stride1D.Dense>)(object)left;
         var floatRight =
-            (MemoryBuffer1D<float, Stride1D.Dense>)(object)right.GetBuffer();
+            (MemoryBuffer1D<float, Stride1D.Dense>)(object)right;
         MemoryBuffer1D<float, Stride1D.Dense> destination =
-            accelerator.Allocate1D<float>(left.Length);
+            accelerator.Allocate1D<float>(length);
 
         try
         {
             using MemoryBuffer1D<GpuInstruction, Stride1D.Dense> programBuffer =
                 accelerator.Allocate1D(program.Instructions);
             kernel.Zip!(
-                left.Length,
+                length,
                 floatLeft.View,
                 floatRight.View,
                 destination.View,
                 programBuffer.View,
                 program.Instructions.Length);
             accelerator.Synchronize();
-            return (ComputeBuffer<T>)(object)new ComputeBuffer<float>(this, destination);
+            return (MemoryBuffer1D<T, Stride1D.Dense>)(object)destination;
         }
         catch
         {
             destination.Dispose();
             throw;
+        }
+    }
+
+    internal T Reduce<T>(
+        ComputeBuffer<T> source,
+        ComputeReductionKind reduction)
+        where T : unmanaged
+    {
+        ThrowIfDisposed();
+        ValidateOwnedBuffer(source);
+        ValidateElementType(typeof(T));
+
+        ComputeBufferNode<T> sourceNode = source.AcquireNode();
+        try
+        {
+            if (sourceNode.Length == 0)
+            {
+                if (reduction == ComputeReductionKind.Sum)
+                {
+                    return (T)(object)0.0f;
+                }
+
+                throw new InvalidOperationException(
+                    $"Cannot compute {reduction} for an empty buffer.");
+            }
+
+            CompiledKernel kernel = GetOrCompileKernel(
+                ComputeKernelKind.Reduction,
+                out _);
+            var sourceBuffer =
+                (MemoryBuffer1D<float, Stride1D.Dense>)(object)
+                sourceNode.GetBuffer();
+            var leases = new List<GpuFloatMemoryPool.Lease>();
+
+            try
+            {
+                MemoryBuffer1D<float, Stride1D.Dense> resultBuffer =
+                    ExecuteReductionPasses(
+                        sourceBuffer,
+                        sourceNode.Length,
+                        reduction,
+                        kernel,
+                        leases);
+                float result = resultBuffer.GetAsArray1D()[0];
+                if (reduction == ComputeReductionKind.Average)
+                {
+                    result /= sourceNode.Length;
+                }
+
+                return (T)(object)result;
+            }
+            finally
+            {
+                ReturnLeases(leases);
+            }
+        }
+        finally
+        {
+            sourceNode.Release();
         }
     }
 
@@ -778,8 +966,6 @@ public sealed class ComputeContext : IDisposable
             throw new ComputeBufferMismatchException(
                 "GPU buffers must belong to the same ComputeContext.");
         }
-
-        _ = buffer.GetBuffer();
     }
 
     private static long StartTiming(bool enabled) =>

@@ -128,15 +128,69 @@ public sealed class ComputeTests
     }
 
     [Test]
-    public void CapturedValue_IsRejectedUntilCapturedParametersAreImplemented()
+    public void CapturedNumericValues_AreUsedAsPlanConstants()
     {
         float multiplier = 2.0f;
+        double offset = 0.5;
+        int divisor = 2;
+
+        float[] result = Compute.Run(
+            [1.0f, 2.0f, 3.0f],
+            value => (value * multiplier + (float)offset) / divisor,
+            new ComputeOptions { Backend = ComputeBackendKind.Scalar });
+
+        Assert.That(result, Is.EqualTo(new[] { 1.25f, 2.25f, 3.25f }));
+    }
+
+    [Test]
+    public void CapturedBool_CanSelectAComputeBranch()
+    {
+        bool negate = true;
+
+        float[] result = Compute.Run(
+            [1.0f, -2.0f],
+            value => negate ? -value : value,
+            new ComputeOptions { Backend = ComputeBackendKind.Scalar });
+
+        Assert.That(result, Is.EqualTo(new[] { -1.0f, 2.0f }));
+    }
+
+    [Test]
+    public void CapturedValue_IsReadForEveryNewPlan()
+    {
+        float multiplier = 2.0f;
+        System.Linq.Expressions.Expression<Func<float, float>> expression =
+            value => value * multiplier;
+
+        float[] first = Compute.Run(
+            [3.0f],
+            expression,
+            new ComputeOptions { Backend = ComputeBackendKind.Scalar });
+        multiplier = 4.0f;
+        float[] second = Compute.Run(
+            [3.0f],
+            expression,
+            new ComputeOptions { Backend = ComputeBackendKind.Scalar });
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(first, Is.EqualTo(new[] { 6.0f }));
+            Assert.That(second, Is.EqualTo(new[] { 12.0f }));
+        });
+    }
+
+    [Test]
+    public void CapturedReferenceObject_IsRejected()
+    {
+        var settings = new CapturedSettings { Multiplier = 2.0f };
 
         GpuExpressionNotSupportedException exception =
             Assert.Throws<GpuExpressionNotSupportedException>(
-                () => Compute.Run([1.0f], value => value * multiplier))!;
+                () => Compute.Run(
+                    [1.0f],
+                    value => value * settings.Multiplier))!;
 
-        Assert.That(exception.Message, Does.Contain("Captured values"));
+        Assert.That(exception.Message, Does.Contain("reference objects"));
     }
 
     [Test]
@@ -175,6 +229,11 @@ public sealed class ComputeTests
             () => Compute.Run([1.0f], value => value, options))!;
 
         Assert.That(exception.Message, Does.Contain("Fast optimization mode"));
+    }
+
+    private sealed class CapturedSettings
+    {
+        public float Multiplier { get; init; }
     }
 
     [Test]
