@@ -29,6 +29,11 @@ FastCompute uses two ILGPU kernel templates in stage 3:
 - `Map`, which reads one source buffer;
 - `Zip`, which reads two source buffers.
 
+GPU in-place Map reuses the Map template and passes the same `ArrayView<float>`
+as both source and destination. Each work item reads and overwrites only its
+own index, so no cross-thread dependency is introduced and no separate kernel
+template is compiled.
+
 The validated FastCompute IR is lowered to a small postfix instruction program.
 The kernel interprets that program independently for every output element.
 Consequently, arbitrary accepted expression structure does not require
@@ -142,6 +147,46 @@ length.
 Stage 3 supports `float` Map/Select and Zip, explicit device selection,
 one-shot and reusable contexts, GPU-resident buffers, diagnostics, thread-safe
 kernel caching, forced compilation, and prepared map operations.
+
+The later in-place stage added `Compute.RunInPlace` and
+`ComputeContext.RunInPlace`. CPU-resident input is uploaded into one pooled
+full-length buffer, processed in that buffer, and downloaded into the original
+array. The operation reuses the existing Map kernel cache.
+
+The subsequent chunking stage added `Compute.ZipInPlace` and
+`ComputeContext.ZipInPlace`. Unary in-place Map uses one device buffer per
+chunk. In-place Zip uses two buffers per chunk and passes the target buffer as
+both the left input and kernel destination. Both operations download directly
+into the corresponding range of the original target array.
+
+Explicit out-of-place unary Map can additionally opt in to double-buffered
+streaming:
+
+```csharp
+float[] result = Compute.Run(
+    source,
+    x => GpuMath.Sin(x),
+    new ComputeOptions
+    {
+        Backend = ComputeBackendKind.Gpu,
+        GpuContext = context,
+        GpuChunkElementCount = 1_000_000,
+        EnableGpuStreaming = true
+    });
+```
+
+This mode uses two ILGPU streams, four pooled device buffers, and two pairs of
+page-locked host staging buffers. Upload, kernel execution, and download of
+adjacent chunks can overlap. The memory planner therefore accounts for four
+device buffers rather than the two used by sequential Map chunking.
+
+Streaming is deliberately explicit and opt-in. `Auto`, Zip, in-place
+operations, reductions, Histogram, and delegate execution reject this option.
+If the input fits in a normal one-shot allocation and no explicit chunk size
+forces splitting, the planner keeps the simpler one-stream execution.
+`ComputeDiagnostics.IsStreaming` and `StreamCount` report the actual execution
+mode. For a partial final chunk, transfer counters describe the physical
+fixed-size staging transfer and can exceed the logical input byte count.
 
 GPU reductions and the reusable transient device-memory pool are implemented in
 [Stage 4](stage-4-reductions-and-pooling.md). Kernel fusion and generated

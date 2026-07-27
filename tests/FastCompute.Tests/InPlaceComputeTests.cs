@@ -154,27 +154,6 @@ public sealed class InPlaceComputeTests
     }
 
     [Test]
-    public void RunInPlace_RejectsGpuBackend()
-    {
-        var options = new ComputeOptions { Backend = ComputeBackendKind.Gpu };
-
-        ComputeBackendNotSupportedException exception =
-            Assert.Throws<ComputeBackendNotSupportedException>(
-                () => Compute.RunInPlace(
-                    [1.0f],
-                    value => value + 1.0f,
-                    options))!;
-
-        Assert.Multiple(() =>
-        {
-            Assert.That(
-                exception.Backend,
-                Is.EqualTo(ComputeBackendKind.Gpu));
-            Assert.That(exception.Operation, Does.Contain("in-place"));
-        });
-    }
-
-    [Test]
     public void RunInPlace_ForcedSimdRejectsUnsupportedExpression()
     {
         RequireAvx();

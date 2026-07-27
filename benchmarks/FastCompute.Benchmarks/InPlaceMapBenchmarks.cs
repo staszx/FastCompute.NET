@@ -14,6 +14,23 @@ public class InPlaceMapBenchmarks : BenchmarkData
     private static readonly ComputeOptions SimdOptions =
         new() { Backend = ComputeBackendKind.Simd };
 
+    private ComputeContext _gpuContext = null!;
+    private ComputeOptions _gpuOptions = null!;
+
+    public override void Setup()
+    {
+        base.Setup();
+        _gpuContext = ComputeContext.Create();
+        _gpuOptions = new ComputeOptions
+        {
+            Backend = ComputeBackendKind.Gpu,
+            GpuContext = _gpuContext
+        };
+    }
+
+    [GlobalCleanup]
+    public void Cleanup() => _gpuContext.Dispose();
+
     [Benchmark(Baseline = true)]
     public float[] ForLoop()
     {
@@ -45,6 +62,20 @@ public class InPlaceMapBenchmarks : BenchmarkData
             Source,
             value => value * 1.000001f + 0.00001f,
             SimdOptions);
+
+    [Benchmark]
+    public float[] FastComputeGpuOutOfPlace() =>
+        Compute.Run(
+            Source,
+            value => value * 1.000001f + 0.00001f,
+            _gpuOptions);
+
+    [Benchmark]
+    public float[] FastComputeGpuInPlace() =>
+        Compute.RunInPlace(
+            Source,
+            value => value * 1.000001f + 0.00001f,
+            _gpuOptions);
 
     [Benchmark]
     public float[] FastComputeAuto() =>

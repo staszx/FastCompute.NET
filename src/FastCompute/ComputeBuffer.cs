@@ -11,6 +11,7 @@ public sealed class ComputeBuffer<T> : IDisposable
     where T : unmanaged
 {
     private readonly ComputeContext context;
+    private readonly object nodeLock = new();
     private ComputeBufferNode<T>? node;
 
     internal ComputeBuffer(
@@ -80,6 +81,20 @@ public sealed class ComputeBuffer<T> : IDisposable
     }
 
     /// <summary>
+    /// Lazily replaces this handle's value with a mapped value.
+    /// The accelerator allocation is reused when exclusively owned; otherwise
+    /// materialization uses copy-on-write to preserve other graph branches.
+    /// </summary>
+    /// <returns>This buffer handle.</returns>
+    public ComputeBuffer<T> SelectInPlace(
+        Expression<Func<T, T>> expression)
+    {
+        ArgumentNullException.ThrowIfNull(expression);
+        context.SelectInPlace(this, expression);
+        return this;
+    }
+
+    /// <summary>
     /// Runs a zip expression against another buffer and keeps its result on the accelerator.
     /// </summary>
     public ComputeBuffer<T> Zip(
@@ -89,6 +104,22 @@ public sealed class ComputeBuffer<T> : IDisposable
         ArgumentNullException.ThrowIfNull(right);
         ArgumentNullException.ThrowIfNull(expression);
         return context.Zip(this, right, expression);
+    }
+
+    /// <summary>
+    /// Lazily replaces this handle's value by zipping it with another buffer.
+    /// The target allocation is reused when exclusively owned; otherwise
+    /// materialization uses copy-on-write to preserve other graph branches.
+    /// </summary>
+    /// <returns>This buffer handle.</returns>
+    public ComputeBuffer<T> ZipInPlace(
+        ComputeBuffer<T> right,
+        Expression<Func<T, T, T>> expression)
+    {
+        ArgumentNullException.ThrowIfNull(right);
+        ArgumentNullException.ThrowIfNull(expression);
+        context.ZipInPlace(this, right, expression);
+        return this;
     }
 
     /// <summary>Computes the sum while keeping the input on the accelerator.</summary>
@@ -115,8 +146,13 @@ public sealed class ComputeBuffer<T> : IDisposable
 
     private void ReleaseNode()
     {
-        ComputeBufferNode<T>? owned =
-            Interlocked.Exchange(ref node, null);
+        ComputeBufferNode<T>? owned;
+        lock (nodeLock)
+        {
+            owned = node;
+            node = null;
+        }
+
         owned?.Release();
     }
 
@@ -124,10 +160,25 @@ public sealed class ComputeBuffer<T> : IDisposable
 
     internal ComputeBufferNode<T> AcquireNode()
     {
-        ComputeBufferNode<T> current =
-            Volatile.Read(ref node) ??
-            throw new ObjectDisposedException(GetType().Name);
-        current.Acquire();
-        return current;
+        lock (nodeLock)
+        {
+            ComputeBufferNode<T> current =
+                node ??
+                throw new ObjectDisposedException(GetType().Name);
+            current.Acquire();
+            return current;
+        }
+    }
+
+    internal void ReplaceNode(
+        Func<ComputeBufferNode<T>, ComputeBufferNode<T>> replacementFactory)
+    {
+        lock (nodeLock)
+        {
+            ComputeBufferNode<T> current =
+                node ??
+                throw new ObjectDisposedException(GetType().Name);
+            node = replacementFactory(current);
+        }
     }
 }

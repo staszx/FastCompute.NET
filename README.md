@@ -6,6 +6,13 @@ expression API and pluggable Scalar CPU, Parallel CPU, SIMD, and GPU backends.
 The project currently provides Scalar, multi-threaded CPU, AVX SIMD, and ILGPU
 backends for `float` arrays.
 
+```powershell
+dotnet add package FastCompute --version 0.5.0-alpha.1
+```
+
+`0.5.0-alpha.1` is the first public preview. Public APIs can still change before
+the stable release.
+
 ```csharp
 float[] source = [0.0f, 0.5f, 1.0f];
 
@@ -22,6 +29,15 @@ float sum = Compute.Sum(mapped);
 float minimum = Compute.Min(mapped);
 float maximum = Compute.Max(mapped);
 float average = Compute.Average(mapped);
+
+ComputeResult<float> sumDetails =
+    Compute.SumWithDiagnostics(mapped);
+
+int[] histogram = Compute.Histogram(
+    mapped,
+    binCount: 256,
+    minimum: 0.0f,
+    maximum: 1.0f);
 ```
 
 Arbitrary .NET methods and captured reference objects can be executed directly
@@ -39,19 +55,42 @@ Compute.RunInPlace(
     source,
     value => value * 2.0f + 1.0f);
 
+Compute.ZipInPlace(
+    target: source,
+    right: mapped,
+    (left, right) => left + right);
+
+using ComputeContext context = ComputeContext.Create(
+    new ComputeContextOptions { AcceleratorIndex = 2 });
+
 float[] gpuResult = source.RunExplicit(
     value => GpuMath.Sin(value),
     new ComputeOptions
     {
         Backend = ComputeBackendKind.Gpu,
-        GpuContext = context
+        GpuContext = context,
+        // Optional: force sequential chunks, or let the memory budget size them.
+        GpuChunkElementCount = 1_000_000
+    });
+
+float[] streamed = Compute.Run(
+    source,
+    value => GpuMath.Sin(value),
+    new ComputeOptions
+    {
+        Backend = ComputeBackendKind.Gpu,
+        GpuContext = context,
+        GpuChunkElementCount = 1_000_000,
+        // Opt in to two-stream, double-buffered Map execution.
+        EnableGpuStreaming = true
     });
 ```
 
 ## Current capabilities
 
 - unary `Compute.Run`;
-- in-place unary `Compute.RunInPlace` on Scalar, Parallel CPU, and SIMD;
+- in-place `Compute.RunInPlace` and `Compute.ZipInPlace` on Scalar, Parallel
+  CPU, SIMD, and GPU;
 - LINQ-style `float[]` extensions with mandatory explicit backend selection
   through `RunExplicit`;
 - arbitrary user delegates through `Compute.RunDelegate` on Scalar and
@@ -59,6 +98,10 @@ float[] gpuResult = source.RunExplicit(
 - binary `Compute.Zip`;
 - `Compute.Sum`;
 - `Compute.Min`, `Compute.Max`, and `Compute.Average`;
+- diagnostic reduction variants such as `Compute.SumWithDiagnostics`;
+- equally spaced `Compute.Histogram` with Scalar, Parallel CPU, and GPU
+  backends; automatic GPU selection is opt-in through
+  `ComputeThresholdOptions.GpuHistogramThreshold`;
 - arithmetic and the MVP `GpuMath` functions;
 - captured `float`, `double`, and `int` local constants, plus captured `bool`
   branch selection;
@@ -69,7 +112,13 @@ float[] gpuResult = source.RunExplicit(
 - AVX `Vector256<float>` Map, Zip, Sum, Min, Max, and Average execution;
 - automatic Scalar/SIMD/Parallel selection;
 - transfer-conservative and memory-budgeted automatic GPU selection;
-- explicit ILGPU Map, Zip, and reduction execution;
+- lazy preferred-GPU selection that does not force Auto away from CPU;
+- sequential memory-budgeted GPU Map, Zip, in-place operations, and
+  reductions;
+- opt-in double-buffered GPU streaming for explicit, out-of-place unary Map;
+- lazy GPU-resident `SelectInPlace` and `ZipInPlace` with copy-on-write for
+  branched execution graphs;
+- explicit ILGPU Map, in-place Map, Zip, and reduction execution;
 - reusable `ComputeContext` adapted from HDRLib's GPU context;
 - lazy GPU-resident `ComputeBuffer<float>` execution graphs;
 - reference-counted graph ownership and one-time materialization;
@@ -79,7 +128,8 @@ float[] gpuResult = source.RunExplicit(
 - context-local transient GPU memory pooling;
 - thread-safe kernel and lowered-expression caches;
 - `PrecompileAll`, expression-specific precompilation, and prepared operations;
-- execution diagnostics;
+- execution diagnostics, including GPU chunk and transfer counters;
+- streaming diagnostics through `IsStreaming` and `StreamCount`;
 - BenchmarkDotNet scenarios for the required data sizes;
 - cancellation and explicit backend validation.
 
@@ -87,28 +137,71 @@ Captured reference objects remain unsupported in the expression API, but can
 be used by `RunDelegate`. `double`/`int` array element types are planned for
 later stages.
 
-See [Stage 1 architecture](docs/stage-1-architecture.md) and
-[Stage 2 architecture](docs/stage-2-architecture.md) for the internal flow,
+See [Stage 1 architecture](https://github.com/staszx/FastCompute.NET/blob/main/docs/stage-1-architecture.md)
+and [Stage 2 architecture](https://github.com/staszx/FastCompute.NET/blob/main/docs/stage-2-architecture.md)
+for the internal flow,
 contracts, and known limitations.
 
 The GPU context, exact kernel-compilation lifecycle, forced precompilation, and
 prepared-operation API are documented in
-[Stage 3 GPU implementation](docs/stage-3-gpu-plan.md).
+[Stage 3 GPU implementation](https://github.com/staszx/FastCompute.NET/blob/main/docs/stage-3-gpu-plan.md).
 
 The supported SIMD expression subset, scalar-tail behavior, and Auto selection
-are documented in [SIMD backend architecture](docs/simd-architecture.md).
+are documented in [SIMD backend architecture](https://github.com/staszx/FastCompute.NET/blob/main/docs/simd-architecture.md).
 
 Reductions, transient GPU memory pooling, CUDA validation, and GPU Auto
 selection are documented in
-[Stage 4 reductions and pooling](docs/stage-4-reductions-and-pooling.md).
+[Stage 4 reductions and pooling](https://github.com/staszx/FastCompute.NET/blob/main/docs/stage-4-reductions-and-pooling.md).
 
 The implemented graph ownership and materialization model, together with the
 remaining conservative fusion boundaries, are documented in
-[Stage 6 execution graph plan](docs/stage-6-execution-graph-plan.md).
+[Stage 6 execution graph plan](https://github.com/staszx/FastCompute.NET/blob/main/docs/stage-6-execution-graph-plan.md).
 
-Backend-specific user delegates, in-place execution, chunked GPU processing,
+Backend-specific user delegates, in-place execution, GPU Map/Zip chunking,
 and the transfer- and memory-aware Auto planner are specified in the
-[additional technical requirements](docs/additional-requirements.md).
+[additional technical requirements](https://github.com/staszx/FastCompute.NET/blob/main/docs/additional-requirements.md).
+
+## Preferred GPU in Auto mode
+
+Accelerator indices include CPU accelerators and therefore must be discovered
+instead of assumed:
+
+```csharp
+foreach (ComputeDeviceInfo device in ComputeContext.GetAccelerators())
+{
+    Console.WriteLine(
+        $"{device.Index}: {device.Name} ({device.AcceleratorType})");
+}
+```
+
+`PreferredGpuAcceleratorIndex` tells Auto which hardware GPU to use if GPU
+execution is beneficial. It does not force GPU execution and does not eagerly
+create a GPU context:
+
+```csharp
+var result = Compute.RunWithDiagnostics(
+    source,
+    value => GpuMath.Sin(value) * GpuMath.Exp(-value * value),
+    new ComputeOptions
+    {
+        Backend = ComputeBackendKind.Auto,
+        PreferredGpuAcceleratorIndex = 2
+    });
+
+Console.WriteLine(result.Diagnostics.Backend);
+Console.WriteLine(result.Diagnostics.DeviceName);
+```
+
+Auto can still select SIMD, Parallel CPU, or Scalar when GPU transfer is not
+worthwhile. If the preferred index is unavailable or does not identify a
+hardware GPU, Auto also continues with a CPU backend. Explicit
+`Backend = ComputeBackendKind.Gpu` never falls back and reports an invalid
+preferred accelerator as an error.
+
+For repeated GPU operations, application-controlled lifetime, precompilation,
+and buffer reuse, create `ComputeContext` explicitly and pass it through
+`GpuContext`. `GpuContext` and `PreferredGpuAcceleratorIndex` are mutually
+exclusive.
 
 ## Console sample
 
@@ -125,7 +218,8 @@ dotnet run --project samples/FastCompute.Sample.Console `
 ```csharp
 using ComputeContext context = ComputeContext.Create();
 
-// Synchronously compile all implemented templates (Map + Zip + Reduction).
+// Synchronously compile all implemented templates
+// (Map + Zip + Reduction + Histogram).
 context.PrecompileAll();
 
 // Also validate, lower, and cache selected expressions.
@@ -156,3 +250,15 @@ The command exits with code `1` when FastCompute is more than 5% slower than
 the loop. Run this gate on stable, otherwise idle hardware. It intentionally
 does not assert performance for small arrays, where expression planning and
 compilation overhead makes a direct loop faster.
+
+## Building the NuGet package
+
+The release script builds and tests the solution, creates `.nupkg` and
+`.snupkg` artifacts, and runs a package-only consumer smoke test:
+
+```powershell
+./pack.ps1
+```
+
+Release history and known limitations are listed in
+[CHANGELOG.md](https://github.com/staszx/FastCompute.NET/blob/main/CHANGELOG.md).

@@ -1,6 +1,6 @@
 # Stage 6 execution graph
 
-## Stage 6a status
+## Stage 6 status
 
 Stage 6a is implemented. `ComputeBuffer<T>.Select` and `Zip` now create lazy,
 immutable graph nodes. No accelerator kernel is launched until `Download` or
@@ -9,6 +9,22 @@ another operation requests a materialized accelerator view.
 Expressions are parsed and optimized when the node is created. This snapshots
 captured primitive values at the same point as the previous eager
 implementation.
+
+The copy-on-write extension is also implemented. `SelectInPlace` and
+`ZipInPlace` atomically replace the value represented by the current public
+buffer handle while remaining lazy:
+
+```csharp
+source
+    .SelectInPlace(value => value * 2.0f)
+    .ZipInPlace(right, (left, value) => left + value);
+```
+
+If the old node has no other consumers, materialization transfers ownership of
+its allocation to the new node and launches Map or Zip with the same allocation
+as the destination. If another graph branch or concurrent reader still owns the
+old value, materialization creates a new allocation. The old branch therefore
+continues to observe its original data.
 
 The graph executor is deliberately unfused. A chain of three `Select` nodes
 still launches three kernels when materialized, but construction of the chain
@@ -30,7 +46,7 @@ using ComputeBuffer<float> result = source
 
 ## Graph model
 
-The implemented internal graph is immutable:
+Individual internal graph nodes remain immutable:
 
 ```text
 BufferSource
@@ -47,6 +63,8 @@ The node kinds are:
 - `BufferSourceNode`: a materialized accelerator allocation;
 - `MapNode`: one unary `ComputeExpressionPlan`;
 - `ZipNode`: two dependencies and one binary `ComputeExpressionPlan`.
+- `InPlaceMapNode` and `InPlaceZipNode`: lazy nodes that reuse an exclusively
+  owned target allocation or materialize with copy-on-write.
 
 Every node records context identity, element type, length, and its optimized
 IR. Captured primitive values are therefore snapshotted when the node is
@@ -92,6 +110,12 @@ reference-counted:
 This preserves the useful existing behavior where a derived buffer remains
 valid after its source handle has been disposed.
 
+`SelectInPlace` and `ZipInPlace` mutate only the public handle's current node.
+They do not rewrite an existing node or invalidate handles and dependencies
+that already refer to the old node. Handle replacement is synchronized with
+download, branching, and disposal. A reader that acquired the old node before
+replacement forces copy-on-write.
+
 Successful materialization releases dependency references as soon as the
 result allocation becomes independent. Explicit `Dispose` is the immediate
 release path. A finalizer is a safety net for unnamed intermediate handles in
@@ -125,6 +149,22 @@ Stage 6a tests cover:
 - graph execution parity with the current eager path;
 - lazy kernel compilation;
 - disposal of unused unmaterialized branches.
+
+Copy-on-write tests additionally cover:
+
+- exclusive Map and Zip allocation reuse;
+- preservation of a pre-existing branch;
+- an aliased right input;
+- consecutive lazy in-place nodes;
+- empty buffers and length-validation failure.
+
+`ResidentGraphInPlaceBenchmarks` compares out-of-place resident Map,
+exclusively owned in-place Map, and forced copy-on-write at 1,000,000 and
+10,000,000 elements. On the explicitly selected NVIDIA GPU at index 2, the
+Dry run measured exclusive in-place at 0.91 and 0.96 of the corresponding
+out-of-place time. Forced copy-on-write measured 0.95 and 1.01. Dry uses one
+cold iteration, so these ratios validate the benchmark scenarios but are not
+used as a stable performance gate.
 
 Remaining stage 6b validation will add:
 

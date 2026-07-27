@@ -110,9 +110,10 @@ public sealed class GpuComputeContextTests
         IReadOnlyList<ComputeCompilationResult> results = context.Precompile(
             ComputeKernel.Map<float>(value => value * 2f),
             ComputeKernel.Zip<float>((left, right) => left + right),
-            ComputeKernel.Reduction<float>(ComputeReductionKind.Sum));
+            ComputeKernel.Reduction<float>(ComputeReductionKind.Sum),
+            ComputeKernel.Histogram<float>());
 
-        Assert.That(results, Has.Count.EqualTo(3));
+        Assert.That(results, Has.Count.EqualTo(4));
         Assert.That(results, Has.All.Property(nameof(ComputeCompilationResult.Backend))
             .EqualTo(ComputeBackendKind.Gpu));
     }
@@ -127,7 +128,7 @@ public sealed class GpuComputeContextTests
 
         Assert.Multiple(() =>
         {
-            Assert.That(first, Has.Count.EqualTo(3));
+            Assert.That(first, Has.Count.EqualTo(4));
             Assert.That(first, Has.All.Property(nameof(ComputeCompilationResult.CacheHit)).False);
             Assert.That(second, Has.All.Property(nameof(ComputeCompilationResult.CacheHit)).True);
         });

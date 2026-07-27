@@ -133,6 +133,87 @@ internal sealed class ParallelComputeBackend : IComputeBackend
             StopTiming(executionStarted, context.CollectDiagnostics));
     }
 
+    internal ComputeBackendExecution<float[]> ExecuteZipInPlace(
+        float[] target,
+        float[] right,
+        ComputeExpressionPlan plan,
+        ComputeExecutionContext context)
+    {
+        long compilationStarted = StartTiming(context.CollectDiagnostics);
+        Func<float, float, float> operation =
+            CpuExpressionCompiler.CompileBinary(plan);
+        TimeSpan compilationTime =
+            StopTiming(compilationStarted, context.CollectDiagnostics);
+
+        long executionStarted = StartTiming(context.CollectDiagnostics);
+        ExecuteChunks(
+            target.Length,
+            context,
+            (start, end) =>
+            {
+                for (int index = start; index < end; index++)
+                {
+                    CheckCancellation(index - start, context.CancellationToken);
+                    target[index] = operation(target[index], right[index]);
+                }
+            });
+
+        return new ComputeBackendExecution<float[]>(
+            target,
+            compilationTime,
+            StopTiming(executionStarted, context.CollectDiagnostics));
+    }
+
+    internal ComputeBackendExecution<int[]> ExecuteHistogram(
+        float[] source,
+        int binCount,
+        float minimum,
+        float maximum,
+        ComputeExecutionContext context)
+    {
+        var histogram = new int[binCount];
+        var mergeLock = new object();
+        float scale = binCount / (maximum - minimum);
+        ParallelOptions options = CreateParallelOptions(context);
+        long executionStarted = StartTiming(context.CollectDiagnostics);
+
+        Parallel.For(
+            0,
+            source.Length,
+            options,
+            () => new int[binCount],
+            (index, _, localHistogram) =>
+            {
+                int binIndex = HistogramUtilities.GetBinIndex(
+                    source[index],
+                    binCount,
+                    minimum,
+                    maximum,
+                    scale);
+                if (binIndex >= 0)
+                {
+                    localHistogram[binIndex]++;
+                }
+
+                return localHistogram;
+            },
+            localHistogram =>
+            {
+                lock (mergeLock)
+                {
+                    for (int index = 0; index < histogram.Length; index++)
+                    {
+                        histogram[index] += localHistogram[index];
+                    }
+                }
+            });
+
+        return new ComputeBackendExecution<int[]>(
+            histogram,
+            TimeSpan.Zero,
+            StopTiming(executionStarted, context.CollectDiagnostics));
+    }
+
     public ComputeBackendExecution<float> Reduce(
         float[] source,
         ComputeReductionKind reduction,

@@ -23,4 +23,10 @@ public sealed class ComputeThresholdOptions
 
     /// <summary>Gets the CPU-memory GPU threshold for heavy expressions.</summary>
     public int GpuHeavyThreshold { get; init; } = 300_000;
+
+    /// <summary>
+    /// Gets the CPU-memory GPU threshold for Histogram. The default disables
+    /// automatic GPU selection until a workload-specific threshold is supplied.
+    /// </summary>
+    public int GpuHistogramThreshold { get; init; } = int.MaxValue;
 }

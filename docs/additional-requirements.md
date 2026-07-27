@@ -87,7 +87,8 @@ float[] result = source.RunExplicit(
 - `Backend.Auto` запрещён;
 - Scalar, Parallel CPU, SIMD или GPU выполняются ровно по явному запросу;
 - `AllowFallback` не заменяет явно выбранный backend;
-- точный GPU задаётся через `GpuContext`;
+- точный GPU задаётся через `GpuContext` или
+  `PreferredGpuAcceleratorIndex`;
 - SIMD и GPU по-прежнему принимают только поддерживаемый compute IR;
 - произвольные пользовательские методы выполняются через отдельный
   `RunDelegate` только на CPU.
@@ -226,6 +227,17 @@ download chunk N-1
 поддержки нескольких ILGPU streams. Базовая последовательная chunked
 реализация должна быть добавлена и протестирована первой.
 
+Реализованный первый production-вариант streaming применяется только к
+explicit GPU out-of-place unary Map и включается через
+`ComputeOptions.EnableGpuStreaming`. Он использует два ILGPU stream, четыре
+переиспользуемых device buffer и page-locked host staging buffers. Режим
+`Auto` и остальные операции отклоняют эту настройку, поэтому streaming никогда
+не меняет backend или семантику вызова неявно.
+
+Для неполного последнего chunk диагностика учитывает физически переданный
+фиксированный staging buffer; поэтому `UploadedBytes` и `DownloadedBytes`
+могут быть больше логического размера массива.
+
 ### 3.4. Reduction
 
 Каждый chunk формирует частичный результат на GPU. Затем частичные результаты
@@ -282,6 +294,12 @@ Planner должен учитывать:
 1. пытается построить chunked GPU-план, если он разрешён и оправдан;
 2. иначе выбирает доступный CPU backend;
 3. записывает причину выбора в diagnostics.
+
+При нескольких GPU `PreferredGpuAcceleratorIndex` задаёт предпочтительный
+hardware accelerator, но не принуждает Auto к GPU. Контекст этого устройства
+создаётся лениво только после выбора GPU планировщиком. Если GPU невыгоден или
+указанный индекс недоступен, Auto использует SIMD, Parallel CPU либо Scalar.
+Явный `Backend.Gpu` с тем же индексом fallback не выполняет.
 
 Если пользователь явно выбрал `Gpu`, библиотека:
 
@@ -375,12 +393,56 @@ CPU-варианта более чем на согласованный допу�
    SIMD, Parallel CPU или Scalar без GPU. Диагностика содержит `IsInPlace`;
    отмена или ошибка не откатывает уже обработанные элементы.
 5. Добавить GPU in-place Map для помещающихся данных.
+   Реализовано 27 июля 2026 года: Map выполняется с одной `ArrayView` в
+   качестве source и destination, поэтому арендуется один полноразмерный
+   device buffer. Поддержаны явный GPU и Auto для тяжёлых выражений,
+   `GpuMemoryBudgetBytes`, diagnostics, kernel/buffer reuse и прямой
+   `ComputeContext.RunInPlace`. При превышении budget операция завершается до
+   изменения CPU-массива.
 6. Добавить последовательный chunked GPU Map и Zip.
+   Реализовано 27 июля 2026 года: размер chunk вычисляется из эффективного
+   memory budget либо задаётся через `GpuChunkElementCount`; Map и Zip
+   последовательно загружают, исполняют и скачивают непересекающиеся диапазоны.
+   Добавлены `EnableGpuChunking`, `ZipWithDiagnostics`, счётчики chunks и
+   переданных bytes. Явный GPU не выполняет скрытый CPU fallback, а Auto может
+   выбрать chunked GPU для подходящего medium/heavy выражения.
 7. Добавить chunked in-place Map и Zip.
+   Реализовано 27 июля 2026 года: `RunInPlace` использует один device buffer
+   на chunk, а новый `ZipInPlace(target, right, ...)` — два. Оба API возвращают
+   исходный target, поддерживают Scalar, Parallel CPU, SIMD, one-shot GPU и
+   chunked GPU. Добавлены `ZipInPlaceWithDiagnostics`, прямой
+   `ComputeContext.ZipInPlace`, CUDA-тесты и отдельные benchmarks.
 8. Добавить chunked Reduction.
+   Реализовано 27 июля 2026 года: CPU-resident `Sum`, `Min`, `Max` и `Average`
+   последовательно редуцируют chunks существующим многостадийным GPU-ядром.
+   Частичные scalar-результаты объединяются в порядке chunks; Average делится
+   на общую длину один раз. Добавлены diagnostic-варианты всех reduction API,
+   CUDA-тесты Auto/explicit budget и отдельные benchmarks.
 9. После Histogram добавить chunked Histogram.
+   Реализовано 27 июля 2026 года вместе с самой операцией:
+   `Compute.Histogram(source, binCount, minimum, maximum, options)` поддерживает
+   Scalar, Parallel CPU, one-shot GPU и chunked GPU. Диапазон включителен,
+   `maximum` относится к последнему bin, а `NaN` и значения вне диапазона
+   игнорируются. GPU накапливает общий histogram атомарно и скачивает только
+   массив counters. Histogram включён в `PrecompileAll`.
 10. Добавить copy-on-write для in-place операций execution graph.
+    Реализовано 27 июля 2026 года: `ComputeBuffer<T>.SelectInPlace` и
+    `ZipInPlace` лениво заменяют значение текущего handle. При эксклюзивном
+    владении прежний GPU allocation используется как destination; если старое
+    значение удерживает другая ветка или конкурентный reader, создаётся новая
+    allocation, а исходная ветка остаётся неизменной. Добавлены CUDA-тесты
+    reuse/COW/aliasing и `ResidentGraphInPlaceBenchmarks`.
 11. Добавить streaming с несколькими buffers только после benchmark-проверки.
+    Реализовано 27 июля 2026 года для explicit out-of-place unary Map как
+    opt-in режим. Два ILGPU stream перекрывают upload, kernel и download
+    соседних chunks; planner учитывает четыре device buffer, а diagnostics
+    сообщает `IsStreaming`, `StreamCount` и физические transfer bytes.
+    BenchmarkDotNet на NVIDIA GeForce GTX 1650 показал ускорение примерно
+    на 21–30% для протестированных выгодных сочетаний размера массива и chunk,
+    но на 10 млн элементов с chunk 1 048 576 режим был примерно на 6% медленнее.
+    Поэтому автоматическое включение намеренно не добавлено. Расширение на Zip,
+    in-place, Reduction и Histogram оставлено отдельным этапом после их
+    собственных benchmark-проверок.
 
 Полноценная поддержка произвольных C#-методов на GPU не входит в эти этапы и
 требует отдельного source-generation или kernel-registration проекта.

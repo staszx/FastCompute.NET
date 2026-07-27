@@ -107,6 +107,63 @@ internal sealed class ScalarComputeBackend : IComputeBackend
             StopTiming(executionStarted, context.CollectDiagnostics));
     }
 
+    internal ComputeBackendExecution<float[]> ExecuteZipInPlace(
+        float[] target,
+        float[] right,
+        ComputeExpressionPlan plan,
+        ComputeExecutionContext context)
+    {
+        long compilationStarted = StartTiming(context.CollectDiagnostics);
+        Func<float, float, float> operation =
+            CpuExpressionCompiler.CompileBinary(plan);
+        TimeSpan compilationTime =
+            StopTiming(compilationStarted, context.CollectDiagnostics);
+
+        long executionStarted = StartTiming(context.CollectDiagnostics);
+        for (int index = 0; index < target.Length; index++)
+        {
+            CheckCancellation(index, context.CancellationToken);
+            target[index] = operation(target[index], right[index]);
+        }
+
+        return new ComputeBackendExecution<float[]>(
+            target,
+            compilationTime,
+            StopTiming(executionStarted, context.CollectDiagnostics));
+    }
+
+    internal ComputeBackendExecution<int[]> ExecuteHistogram(
+        float[] source,
+        int binCount,
+        float minimum,
+        float maximum,
+        ComputeExecutionContext context)
+    {
+        var histogram = new int[binCount];
+        float scale = binCount / (maximum - minimum);
+        long executionStarted = StartTiming(context.CollectDiagnostics);
+
+        for (int index = 0; index < source.Length; index++)
+        {
+            CheckCancellation(index, context.CancellationToken);
+            int binIndex = HistogramUtilities.GetBinIndex(
+                source[index],
+                binCount,
+                minimum,
+                maximum,
+                scale);
+            if (binIndex >= 0)
+            {
+                histogram[binIndex]++;
+            }
+        }
+
+        return new ComputeBackendExecution<int[]>(
+            histogram,
+            TimeSpan.Zero,
+            StopTiming(executionStarted, context.CollectDiagnostics));
+    }
+
     public ComputeBackendExecution<float> Reduce(
         float[] source,
         ComputeReductionKind reduction,

@@ -76,6 +76,39 @@ internal static class GpuKernels
         destination[outputIndex] = result;
     }
 
+    internal static void Histogram(
+        Index1D index,
+        ArrayView<float> source,
+        ArrayView<int> histogram,
+        int binCount,
+        float minimum,
+        float maximum,
+        float scale)
+    {
+        float value = source[index];
+        if (XMath.IsNaN(value) ||
+            value < minimum ||
+            value > maximum)
+        {
+            return;
+        }
+
+        int binIndex;
+        if (value == maximum)
+        {
+            binIndex = binCount - 1;
+        }
+        else
+        {
+            binIndex = (int)((value - minimum) * scale);
+        }
+
+        if ((uint)binIndex < (uint)binCount)
+        {
+            Atomic.Add(ref histogram[binIndex], 1);
+        }
+    }
+
     private static float Evaluate(
         float parameter0,
         float parameter1,

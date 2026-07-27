@@ -32,4 +32,28 @@ public sealed record ComputeDiagnostics(
 
     /// <summary>Gets a value indicating whether execution reused the input array.</summary>
     public bool IsInPlace { get; init; }
+
+    /// <summary>Gets the number of sequential GPU chunks that were executed.</summary>
+    public int ChunkCount { get; init; }
+
+    /// <summary>Gets the planned maximum number of elements in one GPU chunk.</summary>
+    public int ChunkElementCount { get; init; }
+
+    /// <summary>Gets the total number of input bytes uploaded to the GPU.</summary>
+    public long UploadedBytes { get; init; }
+
+    /// <summary>Gets the total number of result bytes downloaded from the GPU.</summary>
+    public long DownloadedBytes { get; init; }
+
+    /// <summary>Gets a value indicating whether more than one GPU chunk was used.</summary>
+    public bool IsChunked => ChunkCount > 1;
+
+    /// <summary>
+    /// Gets a value indicating whether GPU transfers and execution were
+    /// scheduled through an overlapping multi-stream pipeline.
+    /// </summary>
+    public bool IsStreaming { get; init; }
+
+    /// <summary>Gets the number of accelerator streams used by the operation.</summary>
+    public int StreamCount { get; init; }
 }

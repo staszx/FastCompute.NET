@@ -21,10 +21,15 @@ public static class ComputeKernel
     public static ComputeKernelDescriptor Reduction<T>(ComputeReductionKind reduction)
         where T : unmanaged =>
         new(reduction, typeof(T));
+
+    /// <summary>Creates a histogram-kernel descriptor.</summary>
+    public static ComputeKernelDescriptor Histogram<T>()
+        where T : unmanaged =>
+        new(ComputeKernelKind.Histogram, typeof(T));
 }
 
 /// <summary>
-/// Describes an expression to prepare with <see cref="ComputeContext.Precompile"/>.
+/// Describes an operation to prepare with <see cref="ComputeContext.Precompile"/>.
 /// </summary>
 public sealed class ComputeKernelDescriptor
 {
@@ -47,6 +52,14 @@ public sealed class ComputeKernelDescriptor
         ElementType = elementType;
     }
 
+    internal ComputeKernelDescriptor(
+        ComputeKernelKind kind,
+        Type elementType)
+    {
+        Kind = kind;
+        ElementType = elementType;
+    }
+
     internal LambdaExpression? Expression { get; }
 
     internal ComputeKernelKind Kind { get; }
@@ -60,5 +73,6 @@ internal enum ComputeKernelKind
 {
     Map,
     Zip,
-    Reduction
+    Reduction,
+    Histogram
 }

@@ -86,6 +86,34 @@ internal abstract class ComputeBufferNode<T>
         }
     }
 
+    internal bool TryTakeBufferForInPlace(
+        out MemoryBuffer1D<T, Stride1D.Dense>? buffer)
+    {
+        lock (materializationLock)
+        {
+            if (Volatile.Read(ref referenceCount) != 1)
+            {
+                buffer = null;
+                return false;
+            }
+
+            materializedBuffer ??= Materialize();
+            if (Interlocked.CompareExchange(
+                    ref referenceCount,
+                    0,
+                    1) != 1)
+            {
+                buffer = null;
+                return false;
+            }
+
+            buffer = materializedBuffer;
+            materializedBuffer = null;
+            ReleaseDependencies();
+            return true;
+        }
+    }
+
     protected abstract MemoryBuffer1D<T, Stride1D.Dense> Materialize();
 
     protected virtual void ReleaseDependencies()
@@ -193,5 +221,122 @@ internal sealed class ZipBufferNode<T> : ComputeBufferNode<T>
     {
         Interlocked.Exchange(ref left, null)?.Release();
         Interlocked.Exchange(ref right, null)?.Release();
+    }
+}
+
+internal sealed class InPlaceMapBufferNode<T> : ComputeBufferNode<T>
+    where T : unmanaged
+{
+    private ComputeBufferNode<T>? source;
+    private MemoryBuffer1D<T, Stride1D.Dense>? reusableBuffer;
+    private readonly ComputeExpressionPlan plan;
+
+    internal InPlaceMapBufferNode(
+        ComputeContext context,
+        ComputeBufferNode<T> source,
+        ComputeExpressionPlan plan)
+        : base(context, source.Length)
+    {
+        this.source = source;
+        this.plan = plan;
+    }
+
+    protected override MemoryBuffer1D<T, Stride1D.Dense> Materialize()
+    {
+        ComputeBufferNode<T> dependency =
+            source ??
+            throw new ObjectDisposedException(nameof(ComputeBuffer<T>));
+
+        if (dependency.TryTakeBufferForInPlace(out reusableBuffer))
+        {
+            source = null;
+            Context.RecordGraphInPlaceReuse();
+            Context.ExecuteGraphMapInPlace(
+                reusableBuffer!,
+                Length,
+                plan);
+            MemoryBuffer1D<T, Stride1D.Dense> result = reusableBuffer!;
+            reusableBuffer = null;
+            return result;
+        }
+
+        Context.RecordGraphCopyOnWrite();
+        MemoryBuffer1D<T, Stride1D.Dense> copied =
+            Context.ExecuteGraphMap(
+                dependency.GetBuffer(),
+                Length,
+                plan);
+        Interlocked.Exchange(ref source, null)?.Release();
+        return copied;
+    }
+
+    protected override void ReleaseDependencies()
+    {
+        Interlocked.Exchange(ref source, null)?.Release();
+        Interlocked.Exchange(ref reusableBuffer, null)?.Dispose();
+    }
+}
+
+internal sealed class InPlaceZipBufferNode<T> : ComputeBufferNode<T>
+    where T : unmanaged
+{
+    private ComputeBufferNode<T>? left;
+    private ComputeBufferNode<T>? right;
+    private MemoryBuffer1D<T, Stride1D.Dense>? reusableBuffer;
+    private readonly ComputeExpressionPlan plan;
+
+    internal InPlaceZipBufferNode(
+        ComputeContext context,
+        ComputeBufferNode<T> left,
+        ComputeBufferNode<T> right,
+        ComputeExpressionPlan plan)
+        : base(context, left.Length)
+    {
+        this.left = left;
+        this.right = right;
+        this.plan = plan;
+    }
+
+    protected override MemoryBuffer1D<T, Stride1D.Dense> Materialize()
+    {
+        ComputeBufferNode<T> leftDependency =
+            left ??
+            throw new ObjectDisposedException(nameof(ComputeBuffer<T>));
+        ComputeBufferNode<T> rightDependency =
+            right ??
+            throw new ObjectDisposedException(nameof(ComputeBuffer<T>));
+
+        if (leftDependency.TryTakeBufferForInPlace(out reusableBuffer))
+        {
+            left = null;
+            Context.RecordGraphInPlaceReuse();
+            Context.ExecuteGraphZipInPlace(
+                reusableBuffer!,
+                rightDependency.GetBuffer(),
+                Length,
+                plan);
+            Interlocked.Exchange(ref right, null)?.Release();
+            MemoryBuffer1D<T, Stride1D.Dense> result = reusableBuffer!;
+            reusableBuffer = null;
+            return result;
+        }
+
+        Context.RecordGraphCopyOnWrite();
+        MemoryBuffer1D<T, Stride1D.Dense> copied =
+            Context.ExecuteGraphZip(
+                leftDependency.GetBuffer(),
+                rightDependency.GetBuffer(),
+                Length,
+                plan);
+        Interlocked.Exchange(ref left, null)?.Release();
+        Interlocked.Exchange(ref right, null)?.Release();
+        return copied;
+    }
+
+    protected override void ReleaseDependencies()
+    {
+        Interlocked.Exchange(ref left, null)?.Release();
+        Interlocked.Exchange(ref right, null)?.Release();
+        Interlocked.Exchange(ref reusableBuffer, null)?.Dispose();
     }
 }

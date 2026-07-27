@@ -100,6 +100,48 @@ public static class Compute
     }
 
     /// <summary>
+    /// Applies a binary expression and stores each result in
+    /// <paramref name="target"/>.
+    /// </summary>
+    /// <remarks>
+    /// If execution is cancelled or a backend operation fails, elements already
+    /// processed are not rolled back.
+    /// </remarks>
+    /// <returns>The same array instance supplied in <paramref name="target"/>.</returns>
+    public static float[] ZipInPlace(
+        float[] target,
+        float[] right,
+        Expression<Func<float, float, float>> expression,
+        ComputeOptions? options = null) =>
+        ZipInPlaceCore(
+            target,
+            right,
+            expression,
+            options,
+            collectDiagnostics: false,
+            out _);
+
+    /// <summary>
+    /// Applies a binary expression in place and returns execution diagnostics.
+    /// </summary>
+    public static ComputeResult<float[]> ZipInPlaceWithDiagnostics(
+        float[] target,
+        float[] right,
+        Expression<Func<float, float, float>> expression,
+        ComputeOptions? options = null)
+    {
+        float[] value = ZipInPlaceCore(
+            target,
+            right,
+            expression,
+            options,
+            collectDiagnostics: true,
+            out ComputeDiagnostics? diagnostics);
+
+        return new ComputeResult<float[]>(value, diagnostics!);
+    }
+
+    /// <summary>
     /// Applies an arbitrary user delegate to every element using a CPU backend.
     /// </summary>
     /// <remarks>
@@ -157,7 +199,43 @@ public static class Compute
         float[] left,
         float[] right,
         Expression<Func<float, float, float>> expression,
+        ComputeOptions? options = null) =>
+        ZipCore(
+            left,
+            right,
+            expression,
+            options,
+            collectDiagnostics: false,
+            out _);
+
+    /// <summary>
+    /// Applies a binary expression and returns the result together with
+    /// execution diagnostics.
+    /// </summary>
+    public static ComputeResult<float[]> ZipWithDiagnostics(
+        float[] left,
+        float[] right,
+        Expression<Func<float, float, float>> expression,
         ComputeOptions? options = null)
+    {
+        float[] value = ZipCore(
+            left,
+            right,
+            expression,
+            options,
+            collectDiagnostics: true,
+            out ComputeDiagnostics? diagnostics);
+
+        return new ComputeResult<float[]>(value, diagnostics!);
+    }
+
+    private static float[] ZipCore(
+        float[] left,
+        float[] right,
+        Expression<Func<float, float, float>> expression,
+        ComputeOptions? options,
+        bool collectDiagnostics,
+        out ComputeDiagnostics? diagnostics)
     {
         ArgumentNullException.ThrowIfNull(left);
         ArgumentNullException.ThrowIfNull(right);
@@ -170,14 +248,134 @@ public static class Compute
                 nameof(right));
         }
 
+        long planningStarted = collectDiagnostics ? Stopwatch.GetTimestamp() : 0L;
         ComputeOptions effectiveOptions = ValidateOptions(options);
         effectiveOptions.CancellationToken.ThrowIfCancellationRequested();
         ComputeExpressionPlan plan = CreatePlan(expression, effectiveOptions);
-        IComputeBackend backend =
-            ResolveBackend(effectiveOptions, plan, left.Length).Backend;
-        var context = CreateExecutionContext(effectiveOptions, collectDiagnostics: false);
+        BackendResolution resolution =
+            ResolveBackend(effectiveOptions, plan, left.Length);
+        TimeSpan planningTime = collectDiagnostics
+            ? Stopwatch.GetElapsedTime(planningStarted)
+            : TimeSpan.Zero;
+        var context = CreateExecutionContext(effectiveOptions, collectDiagnostics);
+        ComputeBackendExecution<float[]> execution =
+            resolution.Backend.ExecuteZip(left, right, plan, context);
 
-        return backend.ExecuteZip(left, right, plan, context).Value;
+        diagnostics = collectDiagnostics
+            ? CreateDiagnostics(
+                resolution,
+                planningTime,
+                execution,
+                isInPlace: false)
+            : null;
+
+        return execution.Value;
+    }
+
+    /// <summary>
+    /// Counts values in equally sized bins over the inclusive range
+    /// [<paramref name="minimum"/>, <paramref name="maximum"/>].
+    /// </summary>
+    /// <remarks>
+    /// Values outside the range and NaN values are ignored. The maximum value
+    /// belongs to the last bin.
+    /// </remarks>
+    public static int[] Histogram(
+        float[] source,
+        int binCount,
+        float minimum,
+        float maximum,
+        ComputeOptions? options = null) =>
+        HistogramCore(
+            source,
+            binCount,
+            minimum,
+            maximum,
+            options,
+            collectDiagnostics: false,
+            out _);
+
+    /// <summary>Builds a histogram and returns execution diagnostics.</summary>
+    public static ComputeResult<int[]> HistogramWithDiagnostics(
+        float[] source,
+        int binCount,
+        float minimum,
+        float maximum,
+        ComputeOptions? options = null)
+    {
+        int[] value = HistogramCore(
+            source,
+            binCount,
+            minimum,
+            maximum,
+            options,
+            collectDiagnostics: true,
+            out ComputeDiagnostics? diagnostics);
+        return new ComputeResult<int[]>(value, diagnostics!);
+    }
+
+    private static int[] HistogramCore(
+        float[] source,
+        int binCount,
+        float minimum,
+        float maximum,
+        ComputeOptions? options,
+        bool collectDiagnostics,
+        out ComputeDiagnostics? diagnostics)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ValidateHistogramArguments(binCount, minimum, maximum);
+
+        long planningStarted =
+            collectDiagnostics ? Stopwatch.GetTimestamp() : 0L;
+        ComputeOptions effectiveOptions = ValidateOptions(options);
+        effectiveOptions.CancellationToken.ThrowIfCancellationRequested();
+        BackendResolution resolution =
+            ResolveHistogramBackend(
+                effectiveOptions,
+                source.Length,
+                binCount);
+        TimeSpan planningTime = collectDiagnostics
+            ? Stopwatch.GetElapsedTime(planningStarted)
+            : TimeSpan.Zero;
+        ComputeExecutionContext context =
+            CreateExecutionContext(effectiveOptions, collectDiagnostics);
+        ComputeBackendExecution<int[]> execution =
+            resolution.Backend.Kind switch
+            {
+                ComputeBackendKind.Scalar =>
+                    ScalarComputeBackend.Instance.ExecuteHistogram(
+                        source,
+                        binCount,
+                        minimum,
+                        maximum,
+                        context),
+                ComputeBackendKind.ParallelCpu =>
+                    ParallelComputeBackend.Instance.ExecuteHistogram(
+                        source,
+                        binCount,
+                        minimum,
+                        maximum,
+                        context),
+                ComputeBackendKind.Gpu =>
+                    GpuComputeBackend.Instance.ExecuteHistogram(
+                        source,
+                        binCount,
+                        minimum,
+                        maximum,
+                        context),
+                _ => throw new InvalidOperationException(
+                    "Histogram backend resolution returned an unsupported backend.")
+            };
+
+        diagnostics = collectDiagnostics
+            ? CreateDiagnostics(
+                resolution,
+                planningTime,
+                execution,
+                isInPlace: false)
+            : null;
+        return execution.Value;
     }
 
     /// <summary>
@@ -187,27 +385,87 @@ public static class Compute
     /// <param name="options">Optional execution settings.</param>
     /// <returns>The element sum, or zero when the array is empty.</returns>
     public static float Sum(float[] source, ComputeOptions? options = null)
-        => Reduce(source, ComputeReductionKind.Sum, options);
+        => ReduceCore(
+            source,
+            ComputeReductionKind.Sum,
+            options,
+            collectDiagnostics: false,
+            out _);
+
+    /// <summary>Computes the sum and returns execution diagnostics.</summary>
+    public static ComputeResult<float> SumWithDiagnostics(
+        float[] source,
+        ComputeOptions? options = null) =>
+        ReduceWithDiagnostics(source, ComputeReductionKind.Sum, options);
 
     /// <summary>Computes the minimum element in an array.</summary>
     /// <exception cref="InvalidOperationException">The input array is empty.</exception>
     public static float Min(float[] source, ComputeOptions? options = null)
-        => Reduce(source, ComputeReductionKind.Min, options);
+        => ReduceCore(
+            source,
+            ComputeReductionKind.Min,
+            options,
+            collectDiagnostics: false,
+            out _);
+
+    /// <summary>Computes the minimum and returns execution diagnostics.</summary>
+    public static ComputeResult<float> MinWithDiagnostics(
+        float[] source,
+        ComputeOptions? options = null) =>
+        ReduceWithDiagnostics(source, ComputeReductionKind.Min, options);
 
     /// <summary>Computes the maximum element in an array.</summary>
     /// <exception cref="InvalidOperationException">The input array is empty.</exception>
     public static float Max(float[] source, ComputeOptions? options = null)
-        => Reduce(source, ComputeReductionKind.Max, options);
+        => ReduceCore(
+            source,
+            ComputeReductionKind.Max,
+            options,
+            collectDiagnostics: false,
+            out _);
+
+    /// <summary>Computes the maximum and returns execution diagnostics.</summary>
+    public static ComputeResult<float> MaxWithDiagnostics(
+        float[] source,
+        ComputeOptions? options = null) =>
+        ReduceWithDiagnostics(source, ComputeReductionKind.Max, options);
 
     /// <summary>Computes the arithmetic mean of an array.</summary>
     /// <exception cref="InvalidOperationException">The input array is empty.</exception>
     public static float Average(float[] source, ComputeOptions? options = null)
-        => Reduce(source, ComputeReductionKind.Average, options);
+        => ReduceCore(
+            source,
+            ComputeReductionKind.Average,
+            options,
+            collectDiagnostics: false,
+            out _);
 
-    private static float Reduce(
+    /// <summary>Computes the average and returns execution diagnostics.</summary>
+    public static ComputeResult<float> AverageWithDiagnostics(
+        float[] source,
+        ComputeOptions? options = null) =>
+        ReduceWithDiagnostics(source, ComputeReductionKind.Average, options);
+
+    private static ComputeResult<float> ReduceWithDiagnostics(
         float[] source,
         ComputeReductionKind reduction,
         ComputeOptions? options)
+    {
+        float value = ReduceCore(
+            source,
+            reduction,
+            options,
+            collectDiagnostics: true,
+            out ComputeDiagnostics? diagnostics);
+        return new ComputeResult<float>(value, diagnostics!);
+    }
+
+    private static float ReduceCore(
+        float[] source,
+        ComputeReductionKind reduction,
+        ComputeOptions? options,
+        bool collectDiagnostics,
+        out ComputeDiagnostics? diagnostics)
     {
         ArgumentNullException.ThrowIfNull(source);
 
@@ -217,12 +475,28 @@ public static class Compute
                 $"Cannot compute {reduction} for an empty array.");
         }
 
+        long planningStarted =
+            collectDiagnostics ? Stopwatch.GetTimestamp() : 0L;
         ComputeOptions effectiveOptions = ValidateOptions(options);
         effectiveOptions.CancellationToken.ThrowIfCancellationRequested();
-        IComputeBackend backend =
-            ResolveBackend(effectiveOptions, plan: null, source.Length).Backend;
-        var context = CreateExecutionContext(effectiveOptions, collectDiagnostics: false);
-        return backend.Reduce(source, reduction, context).Value;
+        BackendResolution resolution =
+            ResolveBackend(effectiveOptions, plan: null, source.Length);
+        TimeSpan planningTime = collectDiagnostics
+            ? Stopwatch.GetElapsedTime(planningStarted)
+            : TimeSpan.Zero;
+        var context = CreateExecutionContext(effectiveOptions, collectDiagnostics);
+        ComputeBackendExecution<float> execution =
+            resolution.Backend.Reduce(source, reduction, context);
+
+        diagnostics = collectDiagnostics
+            ? CreateDiagnostics(
+                resolution,
+                planningTime,
+                execution,
+                isInPlace: false)
+            : null;
+
+        return execution.Value;
     }
 
     private static float[] RunCore(
@@ -251,20 +525,11 @@ public static class Compute
             backend.ExecuteMap(source, plan, context);
 
         diagnostics = collectDiagnostics
-            ? new ComputeDiagnostics(
-                backend.Kind,
+            ? CreateDiagnostics(
+                resolution,
                 planningTime,
-                execution.CompilationTime,
-                execution.UploadTime,
-                execution.ExecutionTime,
-                execution.DownloadTime,
-                execution.KernelCacheHit,
-                execution.DeviceName)
-            {
-                BackendSelectionReason = resolution.Reason,
-                EstimatedGpuMemoryBytes = resolution.EstimatedGpuMemoryBytes,
-                GpuMemoryBudgetBytes = resolution.GpuMemoryBudgetBytes
-            }
+                execution,
+                isInPlace: false)
             : null;
 
         return execution.Value;
@@ -340,7 +605,12 @@ public static class Compute
         effectiveOptions.CancellationToken.ThrowIfCancellationRequested();
         ComputeExpressionPlan plan = CreatePlan(expression, effectiveOptions);
         BackendResolution resolution =
-            ResolveInPlaceBackend(effectiveOptions, plan, source.Length);
+            ResolveInPlaceBackend(
+                effectiveOptions,
+                plan,
+                source.Length,
+                fullLengthBufferCount: 1,
+                operationName: "in-place Map");
         TimeSpan planningTime = collectDiagnostics
             ? Stopwatch.GetElapsedTime(planningStarted)
             : TimeSpan.Zero;
@@ -364,28 +634,131 @@ public static class Compute
                         source,
                         plan,
                         context),
+                ComputeBackendKind.Gpu =>
+                    GpuComputeBackend.Instance.ExecuteMapInPlace(
+                        source,
+                        plan,
+                        context),
                 _ => throw new InvalidOperationException(
                     "In-place backend resolution returned an unsupported backend.")
             };
 
         diagnostics = collectDiagnostics
-            ? new ComputeDiagnostics(
-                resolution.Backend.Kind,
+            ? CreateDiagnostics(
+                resolution,
                 planningTime,
-                execution.CompilationTime,
-                execution.UploadTime,
-                execution.ExecutionTime,
-                execution.DownloadTime,
-                execution.KernelCacheHit,
-                execution.DeviceName)
-            {
-                BackendSelectionReason = resolution.Reason,
-                IsInPlace = true
-            }
+                execution,
+                isInPlace: true)
             : null;
 
         return execution.Value;
     }
+
+    private static float[] ZipInPlaceCore(
+        float[] target,
+        float[] right,
+        Expression<Func<float, float, float>> expression,
+        ComputeOptions? options,
+        bool collectDiagnostics,
+        out ComputeDiagnostics? diagnostics)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+        ArgumentNullException.ThrowIfNull(right);
+        ArgumentNullException.ThrowIfNull(expression);
+
+        if (target.Length != right.Length)
+        {
+            throw new ArgumentException(
+                $"ZipInPlace requires arrays of equal length, but received " +
+                $"{target.Length} and {right.Length}.",
+                nameof(right));
+        }
+
+        long planningStarted =
+            collectDiagnostics ? Stopwatch.GetTimestamp() : 0L;
+        ComputeOptions effectiveOptions = ValidateOptions(options);
+        effectiveOptions.CancellationToken.ThrowIfCancellationRequested();
+        ComputeExpressionPlan plan = CreatePlan(expression, effectiveOptions);
+        BackendResolution resolution =
+            ResolveInPlaceBackend(
+                effectiveOptions,
+                plan,
+                target.Length,
+                fullLengthBufferCount: 2,
+                operationName: "in-place Zip");
+        TimeSpan planningTime = collectDiagnostics
+            ? Stopwatch.GetElapsedTime(planningStarted)
+            : TimeSpan.Zero;
+        var context =
+            CreateExecutionContext(effectiveOptions, collectDiagnostics);
+        ComputeBackendExecution<float[]> execution =
+            resolution.Backend.Kind switch
+            {
+                ComputeBackendKind.Scalar =>
+                    ScalarComputeBackend.Instance.ExecuteZipInPlace(
+                        target,
+                        right,
+                        plan,
+                        context),
+                ComputeBackendKind.ParallelCpu =>
+                    ParallelComputeBackend.Instance.ExecuteZipInPlace(
+                        target,
+                        right,
+                        plan,
+                        context),
+                ComputeBackendKind.Simd =>
+                    SimdComputeBackend.Instance.ExecuteZipInPlace(
+                        target,
+                        right,
+                        plan,
+                        context),
+                ComputeBackendKind.Gpu =>
+                    GpuComputeBackend.Instance.ExecuteZipInPlace(
+                        target,
+                        right,
+                        plan,
+                        context),
+                _ => throw new InvalidOperationException(
+                    "In-place Zip backend resolution returned an unsupported backend.")
+            };
+
+        diagnostics = collectDiagnostics
+            ? CreateDiagnostics(
+                resolution,
+                planningTime,
+                execution,
+                isInPlace: true)
+            : null;
+
+        return execution.Value;
+    }
+
+    private static ComputeDiagnostics CreateDiagnostics<T>(
+        BackendResolution resolution,
+        TimeSpan planningTime,
+        ComputeBackendExecution<T> execution,
+        bool isInPlace) =>
+        new(
+            resolution.Backend.Kind,
+            planningTime,
+            execution.CompilationTime,
+            execution.UploadTime,
+            execution.ExecutionTime,
+            execution.DownloadTime,
+            execution.KernelCacheHit,
+            execution.DeviceName)
+        {
+            BackendSelectionReason = resolution.Reason,
+            EstimatedGpuMemoryBytes = resolution.EstimatedGpuMemoryBytes,
+            GpuMemoryBudgetBytes = resolution.GpuMemoryBudgetBytes,
+            IsInPlace = isInPlace,
+            ChunkCount = execution.ChunkCount,
+            ChunkElementCount = execution.ChunkElementCount,
+            UploadedBytes = execution.UploadedBytes,
+            DownloadedBytes = execution.DownloadedBytes,
+            IsStreaming = execution.IsStreaming,
+            StreamCount = execution.StreamCount
+        };
 
     private static ComputeOptions ValidateOptions(ComputeOptions? options)
     {
@@ -405,6 +778,7 @@ public static class Compute
         ValidateThreshold(result.Thresholds.GpuSimpleThreshold, nameof(ComputeThresholdOptions.GpuSimpleThreshold));
         ValidateThreshold(result.Thresholds.GpuMediumThreshold, nameof(ComputeThresholdOptions.GpuMediumThreshold));
         ValidateThreshold(result.Thresholds.GpuHeavyThreshold, nameof(ComputeThresholdOptions.GpuHeavyThreshold));
+        ValidateThreshold(result.Thresholds.GpuHistogramThreshold, nameof(ComputeThresholdOptions.GpuHistogramThreshold));
 
         if (result.GpuMemoryBudgetBytes is <= 0)
         {
@@ -412,6 +786,30 @@ public static class Compute
                 nameof(options),
                 result.GpuMemoryBudgetBytes,
                 "GpuMemoryBudgetBytes must be greater than zero.");
+        }
+
+        if (result.GpuChunkElementCount is <= 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(options),
+                result.GpuChunkElementCount,
+                "GpuChunkElementCount must be greater than zero.");
+        }
+
+        if (result.PreferredGpuAcceleratorIndex is < 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(options),
+                result.PreferredGpuAcceleratorIndex,
+                "PreferredGpuAcceleratorIndex cannot be negative.");
+        }
+
+        if (result.GpuContext is not null &&
+            result.PreferredGpuAcceleratorIndex is not null)
+        {
+            throw new ArgumentException(
+                "GpuContext and PreferredGpuAcceleratorIndex cannot be used together.",
+                nameof(options));
         }
 
         return result;
@@ -428,6 +826,66 @@ public static class Compute
         }
     }
 
+    private static void ValidateGpuStreamingRequest(
+        ComputeOptions options,
+        bool supportsStreaming)
+    {
+        if (!options.EnableGpuStreaming)
+        {
+            return;
+        }
+
+        if (options.Backend != ComputeBackendKind.Gpu)
+        {
+            throw new ArgumentException(
+                "GPU streaming requires an explicitly selected GPU backend.",
+                nameof(options));
+        }
+
+        if (!options.EnableGpuChunking)
+        {
+            throw new ArgumentException(
+                "GPU streaming requires GPU chunking to be enabled.",
+                nameof(options));
+        }
+
+        if (!supportsStreaming)
+        {
+            throw new NotSupportedException(
+                "GPU streaming currently supports out-of-place unary Map only.");
+        }
+    }
+
+    private static void ValidateHistogramArguments(
+        int binCount,
+        float minimum,
+        float maximum)
+    {
+        if (binCount <= 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(binCount),
+                binCount,
+                "Histogram bin count must be greater than zero.");
+        }
+
+        if (!float.IsFinite(minimum))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(minimum),
+                minimum,
+                "Histogram minimum must be finite.");
+        }
+
+        if (!float.IsFinite(maximum) || maximum <= minimum)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(maximum),
+                maximum,
+                "Histogram maximum must be finite and greater than minimum.");
+        }
+    }
+
     private static ComputeExecutionContext CreateExecutionContext(
         ComputeOptions options,
         bool collectDiagnostics) =>
@@ -435,7 +893,12 @@ public static class Compute
             options.CancellationToken,
             options.MaxDegreeOfParallelism,
             collectDiagnostics,
-            options.GpuContext);
+            options.GpuContext,
+            options.PreferredGpuAcceleratorIndex,
+            options.GpuMemoryBudgetBytes,
+            options.EnableGpuChunking,
+            options.GpuChunkElementCount,
+            options.EnableGpuStreaming);
 
     private static ComputeExpressionPlan CreatePlan(
         LambdaExpression expression,
@@ -460,13 +923,19 @@ public static class Compute
         ComputeExpressionPlan? plan,
         int elementCount)
     {
+        ValidateGpuStreamingRequest(
+            options,
+            supportsStreaming: plan?.ParameterCount == 1);
         BackendResolution resolution = options.Backend switch
         {
             ComputeBackendKind.Auto => SelectAutomaticBackend(options, plan, elementCount),
             ComputeBackendKind.Scalar => Explicit(ScalarComputeBackend.Instance),
             ComputeBackendKind.ParallelCpu => Explicit(ParallelComputeBackend.Instance),
             ComputeBackendKind.Simd => Explicit(SimdComputeBackend.Instance),
-            ComputeBackendKind.Gpu => Explicit(GpuComputeBackend.Instance),
+            ComputeBackendKind.Gpu =>
+                plan is null
+                    ? ResolveExplicitGpuReduction(options, elementCount)
+                    : ResolveExplicitGpu(options, plan, elementCount),
             _ => throw new ComputeBackendUnavailableException(options.Backend)
         };
         IComputeBackend backend = resolution.Backend;
@@ -489,10 +958,83 @@ public static class Compute
         return resolution;
     }
 
+    private static BackendResolution ResolveExplicitGpuReduction(
+        ComputeOptions options,
+        int elementCount)
+    {
+        long gpuMemoryBudgetBytes =
+            GpuComputeBackend.GetExplicitMemoryBudget(
+                options.GpuContext,
+                options.PreferredGpuAcceleratorIndex,
+                options.GpuMemoryBudgetBytes);
+        GpuChunkPlan chunkPlan = GpuChunkPlan.Create(
+            elementCount,
+            fullLengthBufferCount: 2,
+            gpuMemoryBudgetBytes,
+            options.EnableGpuChunking,
+            options.GpuChunkElementCount);
+        string executionKind =
+            chunkPlan.IsChunked
+                ? $"{chunkPlan.ChunkCount} sequential chunks of up to " +
+                  $"{chunkPlan.ChunkElementCount} elements"
+                : "one GPU allocation set";
+
+        return new BackendResolution(
+            GpuComputeBackend.Instance,
+            $"GPU was explicitly requested for Reduction; execution uses " +
+            $"{executionKind} within the {gpuMemoryBudgetBytes}-byte budget.",
+            chunkPlan.FullWorkingSetBytes,
+            gpuMemoryBudgetBytes);
+    }
+
+    private static BackendResolution ResolveExplicitGpu(
+        ComputeOptions options,
+        ComputeExpressionPlan plan,
+        int elementCount)
+    {
+        long gpuMemoryBudgetBytes =
+            GpuComputeBackend.GetExplicitMemoryBudget(
+                options.GpuContext,
+                options.PreferredGpuAcceleratorIndex,
+                options.GpuMemoryBudgetBytes);
+        GpuChunkPlan chunkPlan =
+            plan.ParameterCount == 1
+                ? GpuChunkPlan.CreateMap(
+                    elementCount,
+                    gpuMemoryBudgetBytes,
+                    options.EnableGpuChunking,
+                    options.GpuChunkElementCount,
+                    options.EnableGpuStreaming)
+                : GpuChunkPlan.Create(
+                    elementCount,
+                    fullLengthBufferCount: 3,
+                    gpuMemoryBudgetBytes,
+                    options.EnableGpuChunking,
+                    options.GpuChunkElementCount);
+        string executionKind =
+            chunkPlan.IsChunked
+                ? $"{chunkPlan.ChunkCount} " +
+                  (options.EnableGpuStreaming
+                      ? "double-buffered streaming"
+                      : "sequential") +
+                  " chunks of up to " +
+                  $"{chunkPlan.ChunkElementCount} elements"
+                : "one GPU allocation set";
+
+        return new BackendResolution(
+            GpuComputeBackend.Instance,
+            $"GPU was explicitly requested; execution uses {executionKind} " +
+            $"within the {gpuMemoryBudgetBytes}-byte budget.",
+            chunkPlan.FullWorkingSetBytes,
+            gpuMemoryBudgetBytes);
+    }
+
     private static BackendResolution ResolveDelegateBackend(
         ComputeOptions options,
-        int elementCount) =>
-        options.Backend switch
+        int elementCount)
+    {
+        ValidateGpuStreamingRequest(options, supportsStreaming: false);
+        return options.Backend switch
         {
             ComputeBackendKind.Auto =>
                 SelectAutomaticDelegateBackend(options, elementCount),
@@ -507,16 +1049,185 @@ public static class Compute
                     $"{ComputeBackendKind.Scalar}, {ComputeBackendKind.ParallelCpu}"),
             _ => throw new ComputeBackendUnavailableException(options.Backend)
         };
+    }
+
+    private static BackendResolution ResolveHistogramBackend(
+        ComputeOptions options,
+        int elementCount,
+        int binCount)
+    {
+        ValidateGpuStreamingRequest(options, supportsStreaming: false);
+        return options.Backend switch
+        {
+            ComputeBackendKind.Auto =>
+                SelectAutomaticHistogramBackend(
+                    options,
+                    elementCount,
+                    binCount),
+            ComputeBackendKind.Scalar =>
+                Explicit(ScalarComputeBackend.Instance),
+            ComputeBackendKind.ParallelCpu =>
+                Explicit(ParallelComputeBackend.Instance),
+            ComputeBackendKind.Gpu =>
+                ResolveExplicitGpuHistogram(
+                    options,
+                    elementCount,
+                    binCount),
+            ComputeBackendKind.Simd =>
+                throw new ComputeBackendNotSupportedException(
+                    ComputeBackendKind.Simd,
+                    "Histogram",
+                    $"{ComputeBackendKind.Scalar}, " +
+                    $"{ComputeBackendKind.ParallelCpu}, " +
+                    $"{ComputeBackendKind.Gpu}"),
+            _ => throw new ComputeBackendUnavailableException(options.Backend)
+        };
+    }
+
+    private static BackendResolution ResolveExplicitGpuHistogram(
+        ComputeOptions options,
+        int elementCount,
+        int binCount)
+    {
+        long budgetBytes =
+            GpuComputeBackend.GetExplicitMemoryBudget(
+                options.GpuContext,
+                options.PreferredGpuAcceleratorIndex,
+                options.GpuMemoryBudgetBytes);
+        GpuChunkPlan chunkPlan = CreateGpuHistogramChunkPlan(
+            elementCount,
+            binCount,
+            budgetBytes,
+            options);
+        string executionKind =
+            chunkPlan.IsChunked
+                ? $"{chunkPlan.ChunkCount} sequential chunks of up to " +
+                  $"{chunkPlan.ChunkElementCount} elements"
+                : "one GPU input allocation";
+
+        return new BackendResolution(
+            GpuComputeBackend.Instance,
+            $"GPU was explicitly requested for Histogram; execution uses " +
+            $"{executionKind} within the {budgetBytes}-byte budget.",
+            chunkPlan.FullWorkingSetBytes,
+            budgetBytes);
+    }
+
+    private static BackendResolution SelectAutomaticHistogramBackend(
+        ComputeOptions options,
+        int elementCount,
+        int binCount)
+    {
+        string gpuDecision;
+        long? estimatedGpuMemoryBytes = null;
+        long? gpuMemoryBudgetBytes = null;
+
+        if (options.Thresholds.GpuHistogramThreshold == int.MaxValue)
+        {
+            gpuDecision =
+                "Automatic GPU Histogram selection is disabled by default " +
+                "for CPU-resident input.";
+        }
+        else if (elementCount < options.Thresholds.GpuHistogramThreshold)
+        {
+            gpuDecision =
+                $"GPU threshold {options.Thresholds.GpuHistogramThreshold} " +
+                "was not reached.";
+        }
+        else if (!GpuComputeBackend.TryGetAutomaticMemoryBudget(
+                     options.GpuContext,
+                     options.PreferredGpuAcceleratorIndex,
+                     options.GpuMemoryBudgetBytes,
+                     out long memoryBudget))
+        {
+            gpuDecision = GetUnavailableGpuReason(options);
+        }
+        else
+        {
+            estimatedGpuMemoryBytes =
+                EstimateGpuHistogramWorkingSetBytes(elementCount, binCount);
+            gpuMemoryBudgetBytes = memoryBudget;
+
+            try
+            {
+                GpuChunkPlan chunkPlan = CreateGpuHistogramChunkPlan(
+                    elementCount,
+                    binCount,
+                    memoryBudget,
+                    options);
+                string executionKind =
+                    chunkPlan.IsChunked
+                        ? $"chunked Histogram using {chunkPlan.ChunkCount} " +
+                          $"chunks of up to " +
+                          $"{chunkPlan.ChunkElementCount} elements"
+                        : "Histogram whose full working set fits the budget";
+
+                return new BackendResolution(
+                    GpuComputeBackend.Instance,
+                    $"GPU selected for {executionKind}.",
+                    estimatedGpuMemoryBytes,
+                    gpuMemoryBudgetBytes);
+            }
+            catch (ComputeGpuMemoryBudgetExceededException)
+            {
+                gpuDecision =
+                    $"GPU rejected because the Histogram working set exceeds " +
+                    $"the {memoryBudget}-byte memory budget and no configured " +
+                    "chunk fits it.";
+            }
+        }
+
+        int availableParallelism =
+            options.MaxDegreeOfParallelism ?? Environment.ProcessorCount;
+        if (availableParallelism > 1 &&
+            elementCount >= options.Thresholds.ParallelThreshold)
+        {
+            return new BackendResolution(
+                ParallelComputeBackend.Instance,
+                $"{gpuDecision} Parallel CPU selected because its threshold " +
+                "was reached.",
+                estimatedGpuMemoryBytes,
+                gpuMemoryBudgetBytes);
+        }
+
+        return new BackendResolution(
+            ScalarComputeBackend.Instance,
+            $"{gpuDecision} Scalar selected because the Parallel CPU threshold " +
+            "or available parallelism requirement was not met.",
+            estimatedGpuMemoryBytes,
+            gpuMemoryBudgetBytes);
+    }
+
+    private static GpuChunkPlan CreateGpuHistogramChunkPlan(
+        int elementCount,
+        int binCount,
+        long budgetBytes,
+        ComputeOptions options) =>
+        GpuChunkPlan.Create(
+            elementCount,
+            bytesPerElement: sizeof(float),
+            fixedWorkingSetBytes: checked((long)binCount * sizeof(int)),
+            budgetBytes,
+            options.EnableGpuChunking,
+            options.GpuChunkElementCount);
 
     private static BackendResolution ResolveInPlaceBackend(
         ComputeOptions options,
         ComputeExpressionPlan plan,
-        int elementCount)
+        int elementCount,
+        int fullLengthBufferCount,
+        string operationName)
     {
+        ValidateGpuStreamingRequest(options, supportsStreaming: false);
         BackendResolution resolution = options.Backend switch
         {
             ComputeBackendKind.Auto =>
-                SelectAutomaticInPlaceBackend(options, plan, elementCount),
+                SelectAutomaticInPlaceBackend(
+                    options,
+                    plan,
+                    elementCount,
+                    fullLengthBufferCount,
+                    operationName),
             ComputeBackendKind.Scalar =>
                 Explicit(ScalarComputeBackend.Instance),
             ComputeBackendKind.ParallelCpu =>
@@ -524,12 +1235,11 @@ public static class Compute
             ComputeBackendKind.Simd =>
                 Explicit(SimdComputeBackend.Instance),
             ComputeBackendKind.Gpu =>
-                throw new ComputeBackendNotSupportedException(
-                    options.Backend,
-                    "in-place Map",
-                    $"{ComputeBackendKind.Scalar}, " +
-                    $"{ComputeBackendKind.ParallelCpu}, " +
-                    $"{ComputeBackendKind.Simd}"),
+                ResolveExplicitGpuInPlace(
+                    options,
+                    elementCount,
+                    fullLengthBufferCount,
+                    operationName),
             _ => throw new ComputeBackendUnavailableException(options.Backend)
         };
 
@@ -543,11 +1253,133 @@ public static class Compute
         return resolution;
     }
 
+    private static BackendResolution ResolveExplicitGpuInPlace(
+        ComputeOptions options,
+        int elementCount,
+        int fullLengthBufferCount,
+        string operationName)
+    {
+        long gpuMemoryBudgetBytes =
+            GpuComputeBackend.GetExplicitMemoryBudget(
+                options.GpuContext,
+                options.PreferredGpuAcceleratorIndex,
+                options.GpuMemoryBudgetBytes);
+        GpuChunkPlan chunkPlan = GpuChunkPlan.Create(
+            elementCount,
+            fullLengthBufferCount,
+            gpuMemoryBudgetBytes,
+            options.EnableGpuChunking,
+            options.GpuChunkElementCount);
+        string executionKind =
+            chunkPlan.IsChunked
+                ? $"{chunkPlan.ChunkCount} sequential chunks of up to " +
+                  $"{chunkPlan.ChunkElementCount} elements"
+                : "one GPU allocation set";
+
+        return new BackendResolution(
+            GpuComputeBackend.Instance,
+            $"GPU was explicitly requested for {operationName}; execution " +
+            $"uses {executionKind} within the " +
+            $"{gpuMemoryBudgetBytes}-byte budget.",
+            chunkPlan.FullWorkingSetBytes,
+            gpuMemoryBudgetBytes);
+    }
+
     private static BackendResolution SelectAutomaticInPlaceBackend(
         ComputeOptions options,
         ComputeExpressionPlan plan,
-        int elementCount)
+        int elementCount,
+        int fullLengthBufferCount,
+        string operationName)
     {
+        ComputeExpressionComplexity complexity =
+            ComputeExpressionClassifier.Classify(plan);
+        int gpuThreshold =
+            ComputeExpressionClassifier.GetGpuThreshold(
+                plan,
+                options.Thresholds);
+        string gpuDecision;
+        long? estimatedGpuMemoryBytes = null;
+        long? gpuMemoryBudgetBytes = null;
+
+        if (complexity == ComputeExpressionComplexity.Simple &&
+            gpuThreshold == int.MaxValue)
+        {
+            gpuDecision =
+                "GPU was not considered because automatic GPU selection for " +
+                "CPU-resident simple expressions is disabled by default.";
+        }
+        else if (elementCount < gpuThreshold)
+        {
+            gpuDecision = $"GPU threshold {gpuThreshold} was not reached.";
+        }
+        else if (!GpuComputeBackend.TryGetAutomaticMemoryBudget(
+                     options.GpuContext,
+                     options.PreferredGpuAcceleratorIndex,
+                     options.GpuMemoryBudgetBytes,
+                     out long memoryBudget))
+        {
+            gpuDecision = GetUnavailableGpuReason(options);
+        }
+        else
+        {
+            estimatedGpuMemoryBytes =
+                GpuChunkPlan.EstimateWorkingSetBytes(
+                    elementCount,
+                    fullLengthBufferCount);
+            gpuMemoryBudgetBytes = memoryBudget;
+
+            if (estimatedGpuMemoryBytes <= memoryBudget)
+            {
+                return new BackendResolution(
+                    GpuComputeBackend.Instance,
+                    $"GPU selected for {operationName} and a " +
+                    $"{complexity.ToString().ToLowerInvariant()} expression; " +
+                    $"estimated working set {estimatedGpuMemoryBytes} bytes " +
+                    $"fits the {memoryBudget}-byte budget.",
+                    estimatedGpuMemoryBytes,
+                    gpuMemoryBudgetBytes);
+            }
+
+            if (options.EnableGpuChunking)
+            {
+                try
+                {
+                    GpuChunkPlan chunkPlan = GpuChunkPlan.Create(
+                        elementCount,
+                        fullLengthBufferCount,
+                        memoryBudget,
+                        enableChunking: true,
+                        options.GpuChunkElementCount);
+
+                    return new BackendResolution(
+                        GpuComputeBackend.Instance,
+                        $"GPU selected for chunked {operationName} and a " +
+                        $"{complexity.ToString().ToLowerInvariant()} expression; " +
+                        $"the full {estimatedGpuMemoryBytes}-byte working set " +
+                        $"exceeds the {memoryBudget}-byte budget, so execution " +
+                        $"uses {chunkPlan.ChunkCount} sequential chunks of up to " +
+                        $"{chunkPlan.ChunkElementCount} elements.",
+                        estimatedGpuMemoryBytes,
+                        gpuMemoryBudgetBytes);
+                }
+                catch (ComputeGpuMemoryBudgetExceededException)
+                {
+                    gpuDecision =
+                        $"GPU rejected because the full estimated in-place " +
+                        $"working set exceeds the {memoryBudget}-byte memory " +
+                        "budget and no configured chunk fits it.";
+                }
+            }
+            else
+            {
+                gpuDecision =
+                    $"GPU rejected because estimated in-place working set " +
+                    $"{estimatedGpuMemoryBytes} bytes exceeds the " +
+                    $"{memoryBudget}-byte memory budget.";
+            }
+        }
+
         bool simdSupported =
             SimdComputeBackend.Instance.IsAvailable &&
             SimdComputeBackend.Instance.Supports(plan);
@@ -557,10 +1389,10 @@ public static class Compute
         {
             return new BackendResolution(
                 SimdComputeBackend.Instance,
-                "GPU in-place execution is not implemented. SIMD selected " +
+                $"{gpuDecision} SIMD selected " +
                 "because the expression is supported and its threshold was reached.",
-                null,
-                null);
+                estimatedGpuMemoryBytes,
+                gpuMemoryBudgetBytes);
         }
 
         int availableParallelism =
@@ -570,19 +1402,19 @@ public static class Compute
         {
             return new BackendResolution(
                 ParallelComputeBackend.Instance,
-                "GPU in-place execution is not implemented. Parallel CPU " +
+                $"{gpuDecision} Parallel CPU " +
                 "selected because SIMD was unavailable or unsupported and the " +
                 "parallel threshold was reached.",
-                null,
-                null);
+                estimatedGpuMemoryBytes,
+                gpuMemoryBudgetBytes);
         }
 
         return new BackendResolution(
             ScalarComputeBackend.Instance,
-            "GPU in-place execution is not implemented. Scalar selected " +
+            $"{gpuDecision} Scalar selected " +
             "because no accelerated CPU backend met its requirements.",
-            null,
-            null);
+            estimatedGpuMemoryBytes,
+            gpuMemoryBudgetBytes);
     }
 
     private static BackendResolution SelectAutomaticDelegateBackend(
@@ -637,10 +1469,11 @@ public static class Compute
         }
         else if (!GpuComputeBackend.TryGetAutomaticMemoryBudget(
                      options.GpuContext,
+                     options.PreferredGpuAcceleratorIndex,
                      options.GpuMemoryBudgetBytes,
                      out long memoryBudget))
         {
-            gpuDecision = "No hardware GPU accelerator is available.";
+            gpuDecision = GetUnavailableGpuReason(options);
         }
         else
         {
@@ -662,10 +1495,45 @@ public static class Compute
                     gpuMemoryBudgetBytes);
             }
 
-            gpuDecision =
-                $"GPU rejected because estimated working set " +
-                $"{estimatedGpuMemoryBytes} bytes exceeds the " +
-                $"{memoryBudget}-byte memory budget.";
+            if (options.EnableGpuChunking)
+            {
+                int fullLengthBufferCount =
+                    plan?.ParameterCount == 2 ? 3 : 2;
+                try
+                {
+                    GpuChunkPlan chunkPlan = GpuChunkPlan.Create(
+                        elementCount,
+                        fullLengthBufferCount,
+                        memoryBudget,
+                        enableChunking: true,
+                        options.GpuChunkElementCount);
+
+                    return new BackendResolution(
+                        GpuComputeBackend.Instance,
+                        $"GPU selected for a chunked " +
+                        $"{complexity.ToString().ToLowerInvariant()} expression; " +
+                        $"the full {estimatedGpuMemoryBytes}-byte working set " +
+                        $"exceeds the {memoryBudget}-byte budget, so execution uses " +
+                        $"{chunkPlan.ChunkCount} sequential chunks of up to " +
+                        $"{chunkPlan.ChunkElementCount} elements.",
+                        estimatedGpuMemoryBytes,
+                        gpuMemoryBudgetBytes);
+                }
+                catch (ComputeGpuMemoryBudgetExceededException)
+                {
+                    gpuDecision =
+                        $"GPU rejected because the full estimated working set " +
+                        $"exceeds the {memoryBudget}-byte memory budget and no " +
+                        "configured chunk fits it.";
+                }
+            }
+            else
+            {
+                gpuDecision =
+                    $"GPU rejected because estimated working set " +
+                    $"{estimatedGpuMemoryBytes} bytes exceeds the " +
+                    $"{memoryBudget}-byte memory budget.";
+            }
         }
 
         bool simdSupported =
@@ -720,14 +1588,43 @@ public static class Compute
             1 => 2,
             _ => throw new ArgumentOutOfRangeException(nameof(parameterCount))
         };
-        const long planningOverheadBytes = 1024 * 1024;
+        return GpuChunkPlan.EstimateWorkingSetBytes(
+            elementCount,
+            fullLengthBuffers);
+    }
+
+    private static string GetUnavailableGpuReason(ComputeOptions options) =>
+        options.PreferredGpuAcceleratorIndex is int index
+            ? $"Preferred hardware GPU accelerator index {index} is unavailable."
+            : "No hardware GPU accelerator is available.";
+
+    internal static long EstimateGpuInPlaceWorkingSetBytes(
+        int elementCount)
+    {
+        if (elementCount == 0)
+        {
+            return 0;
+        }
 
         return checked(
             (long)elementCount *
-            sizeof(float) *
-            fullLengthBuffers +
-            planningOverheadBytes);
+            sizeof(float) +
+            GpuChunkPlan.PlanningOverheadBytes);
     }
+
+    internal static long EstimateGpuZipInPlaceWorkingSetBytes(
+        int elementCount) =>
+        GpuChunkPlan.EstimateWorkingSetBytes(
+            elementCount,
+            fullLengthBufferCount: 2);
+
+    internal static long EstimateGpuHistogramWorkingSetBytes(
+        int elementCount,
+        int binCount) =>
+        GpuChunkPlan.EstimateWorkingSetBytes(
+            elementCount,
+            bytesPerElement: sizeof(float),
+            fixedWorkingSetBytes: checked((long)binCount * sizeof(int)));
 
     private static BackendResolution Explicit(IComputeBackend backend) =>
         new(

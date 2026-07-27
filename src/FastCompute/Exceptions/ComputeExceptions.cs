@@ -62,6 +62,32 @@ public sealed class ComputeBackendNotSupportedException : ComputeException
 }
 
 /// <summary>
+/// Indicates that a GPU operation exceeds its configured memory budget.
+/// </summary>
+public sealed class ComputeGpuMemoryBudgetExceededException : ComputeException
+{
+    /// <summary>Initializes an exception for a GPU working set that does not fit.</summary>
+    public ComputeGpuMemoryBudgetExceededException(
+        long estimatedBytes,
+        long budgetBytes)
+        : base(
+            $"The estimated GPU working set is {estimatedBytes} bytes, which " +
+            $"exceeds the {budgetBytes}-byte memory budget. Reduce the input " +
+            "size or configured chunk size, or use an execution mode that " +
+            "supports chunking.")
+    {
+        EstimatedBytes = estimatedBytes;
+        BudgetBytes = budgetBytes;
+    }
+
+    /// <summary>Gets the estimated working-set size.</summary>
+    public long EstimatedBytes { get; }
+
+    /// <summary>Gets the effective GPU memory budget.</summary>
+    public long BudgetBytes { get; }
+}
+
+/// <summary>
 /// Indicates that a compute expression could not be compiled.
 /// </summary>
 public sealed class ComputeCompilationException : ComputeException

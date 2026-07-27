@@ -154,6 +154,56 @@ internal sealed class SimdComputeBackend : IComputeBackend
             StopTiming(executionStarted, context.CollectDiagnostics));
     }
 
+    internal ComputeBackendExecution<float[]> ExecuteZipInPlace(
+        float[] target,
+        float[] right,
+        ComputeExpressionPlan plan,
+        ComputeExecutionContext context)
+    {
+        long compilationStarted = StartTiming(context.CollectDiagnostics);
+        Func<
+            Vector256<float>,
+            Vector256<float>,
+            Vector256<float>> vectorOperation =
+            SimdExpressionCompiler.CompileBinary(plan);
+        Func<float, float, float> scalarOperation =
+            CpuExpressionCompiler.CompileBinary(plan);
+        TimeSpan compilationTime =
+            StopTiming(compilationStarted, context.CollectDiagnostics);
+        int vectorizedLength =
+            target.Length - target.Length % Vector256<float>.Count;
+        ref float targetReference =
+            ref MemoryMarshal.GetArrayDataReference(target);
+        ref float rightReference =
+            ref MemoryMarshal.GetArrayDataReference(right);
+
+        long executionStarted = StartTiming(context.CollectDiagnostics);
+        for (int offset = 0;
+             offset < vectorizedLength;
+             offset += Vector256<float>.Count)
+        {
+            CheckCancellation(offset, context.CancellationToken);
+            Vector256<float> targetVector =
+                Vector256.LoadUnsafe(ref targetReference, (nuint)offset);
+            Vector256<float> rightVector =
+                Vector256.LoadUnsafe(ref rightReference, (nuint)offset);
+            Vector256<float> result =
+                vectorOperation(targetVector, rightVector);
+            result.StoreUnsafe(ref targetReference, (nuint)offset);
+        }
+
+        for (int index = vectorizedLength; index < target.Length; index++)
+        {
+            CheckCancellation(index, context.CancellationToken);
+            target[index] = scalarOperation(target[index], right[index]);
+        }
+
+        return new ComputeBackendExecution<float[]>(
+            target,
+            compilationTime,
+            StopTiming(executionStarted, context.CollectDiagnostics));
+    }
+
     public ComputeBackendExecution<float> Reduce(
         float[] source,
         ComputeReductionKind reduction,

@@ -9,22 +9,37 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <IsPackable>true</IsPackable>
     <PackageId>FastCompute</PackageId>
+    <Title>FastCompute.NET</Title>
     <Version>0.5.0-alpha.1</Version>
     <Authors>staszx</Authors>
+    <Copyright>Copyright (c) 2026 staszx</Copyright>
     <Description>High-performance array computation with pluggable CPU, SIMD, and GPU backends.</Description>
+    <PackageTags>arrays;performance;simd;gpu;cuda;ilgpu;parallel</PackageTags>
+    <PackageProjectUrl>https://github.com/staszx/FastCompute.NET</PackageProjectUrl>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReleaseNotes>First public preview with Scalar, Parallel CPU, SIMD, ILGPU, chunked execution, reductions, Histogram, GPU-resident graphs, explicit controls, and preferred-GPU Auto selection.</PackageReleaseNotes>
     <RepositoryUrl>https://github.com/staszx/FastCompute.NET</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <Deterministic>true</Deterministic>
   </PropertyGroup>
 
   <ItemGroup>
     <None Include="..\..\README.md" Pack="true" PackagePath="\" Link="README.md" />
+    <None Include="..\..\CHANGELOG.md" Pack="true" PackagePath="\" Link="CHANGELOG.md" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="ILGPU" Version="1.5.3" />
     <PackageReference Include="ILGPU.Algorithms" Version="1.5.3" />
+    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.0.0">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
   </ItemGroup>
 
 </Project>
