@@ -40,7 +40,7 @@ public class PipelineFusionBenchmarks
             scalarOptions);
         return Compute.Run(
             second,
-            value => GpuMath.Clamp(value, 0.0f, 1.0f),
+            value => ComputeMath.Clamp(value, 0.0f, 1.0f),
             scalarOptions);
     }
 
@@ -50,6 +50,6 @@ public class PipelineFusionBenchmarks
             .AsCompute(scalarOptions)
             .Select(value => value * 2.0f)
             .SelectInPlace(value => value + 1.0f)
-            .Select(value => GpuMath.Clamp(value, 0.0f, 1.0f))
+            .Select(value => ComputeMath.Clamp(value, 0.0f, 1.0f))
             .ToArray();
 }

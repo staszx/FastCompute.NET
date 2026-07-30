@@ -82,14 +82,14 @@ internal static class CpuExpressionCompiler
 
         foreach (ComputeFunction function in Enum.GetValues<ComputeFunction>())
         {
-            MethodInfo? method = typeof(GpuMath).GetMethod(
+            MethodInfo? method = typeof(ComputeMath).GetMethod(
                 function.ToString(),
                 BindingFlags.Public | BindingFlags.Static);
 
             result.Add(
                 function,
                 method ?? throw new InvalidOperationException(
-                    $"GpuMath does not define the expected method '{function}'."));
+                    $"ComputeMath does not define the expected method '{function}'."));
         }
 
         return result;

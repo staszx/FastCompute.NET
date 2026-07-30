@@ -27,7 +27,7 @@ array:
 ```csharp
 using ComputeBuffer<float> input = context.Upload(source);
 using ComputeBuffer<float> transformed =
-    input.Select(value => GpuMath.Sin(value));
+    input.Select(value => ComputeMath.Sin(value));
 
 float sum = transformed.Sum();
 float minimum = transformed.Min();

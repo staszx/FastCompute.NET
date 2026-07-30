@@ -29,8 +29,8 @@ public class ResidentGraphInPlaceBenchmarks
 
         _context.Precompile<float>(
             value =>
-                GpuMath.Sin(value) *
-                GpuMath.Exp(-value * value));
+                ComputeMath.Sin(value) *
+                ComputeMath.Exp(-value * value));
         _context.PrecompileReduction<float>(ComputeReductionKind.Sum);
     }
 
@@ -44,8 +44,8 @@ public class ResidentGraphInPlaceBenchmarks
         using ComputeBuffer<float> result =
             source.Select(
                 value =>
-                    GpuMath.Sin(value) *
-                    GpuMath.Exp(-value * value));
+                    ComputeMath.Sin(value) *
+                    ComputeMath.Exp(-value * value));
         return result.Sum();
     }
 
@@ -55,8 +55,8 @@ public class ResidentGraphInPlaceBenchmarks
         using ComputeBuffer<float> source = _context.Upload(_source);
         source.SelectInPlace(
             value =>
-                GpuMath.Sin(value) *
-                GpuMath.Exp(-value * value));
+                ComputeMath.Sin(value) *
+                ComputeMath.Exp(-value * value));
         return source.Sum();
     }
 
@@ -68,8 +68,8 @@ public class ResidentGraphInPlaceBenchmarks
             source.Select(value => value);
         source.SelectInPlace(
             value =>
-                GpuMath.Sin(value) *
-                GpuMath.Exp(-value * value));
+                ComputeMath.Sin(value) *
+                ComputeMath.Exp(-value * value));
         return source.Sum();
     }
 }

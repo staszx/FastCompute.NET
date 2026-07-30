@@ -57,7 +57,7 @@ public class MediumZipBenchmarks : BenchmarkData
             Source,
             _right,
             (left, right) =>
-                left * right + GpuMath.Sqrt(GpuMath.Abs(left - right)),
+                left * right + ComputeMath.Sqrt(ComputeMath.Abs(left - right)),
             ScalarOptions);
 
     [Benchmark]
@@ -66,7 +66,7 @@ public class MediumZipBenchmarks : BenchmarkData
             Source,
             _right,
             (left, right) =>
-                left * right + GpuMath.Sqrt(GpuMath.Abs(left - right)),
+                left * right + ComputeMath.Sqrt(ComputeMath.Abs(left - right)),
             ParallelOptions);
 
     [Benchmark]
@@ -75,5 +75,5 @@ public class MediumZipBenchmarks : BenchmarkData
             Source,
             _right,
             (left, right) =>
-                left * right + GpuMath.Sqrt(GpuMath.Abs(left - right)));
+                left * right + ComputeMath.Sqrt(ComputeMath.Abs(left - right)));
 }

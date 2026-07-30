@@ -22,8 +22,8 @@ public sealed class PreferredGpuAcceleratorTests
         var result = Compute.RunWithDiagnostics(
             CreateSource(4_096),
             value =>
-                GpuMath.Sin(value) *
-                GpuMath.Exp(-value * value),
+                ComputeMath.Sin(value) *
+                ComputeMath.Exp(-value * value),
             new ComputeOptions
             {
                 Thresholds = new ComputeThresholdOptions
@@ -78,8 +78,8 @@ public sealed class PreferredGpuAcceleratorTests
         var result = Compute.RunWithDiagnostics(
             source,
             value =>
-                GpuMath.Sin(value) *
-                GpuMath.Exp(-value * value),
+                ComputeMath.Sin(value) *
+                ComputeMath.Exp(-value * value),
             options);
 
         Assert.Multiple(() =>
@@ -137,8 +137,8 @@ public sealed class PreferredGpuAcceleratorTests
         var result = Compute.RunWithDiagnostics(
             source,
             value =>
-                GpuMath.Sin(value) *
-                GpuMath.Exp(-value * value),
+                ComputeMath.Sin(value) *
+                ComputeMath.Exp(-value * value),
             options);
 
         Assert.Multiple(() =>

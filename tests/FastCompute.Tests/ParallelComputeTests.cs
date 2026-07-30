@@ -16,12 +16,12 @@ public sealed class ParallelComputeTests
         float[] source = CreateSource(25_003);
         float[] scalar = Compute.Run(
             source,
-            value => GpuMath.Sin(value) * 2.0f - GpuMath.Sqrt(GpuMath.Abs(value)),
+            value => ComputeMath.Sin(value) * 2.0f - ComputeMath.Sqrt(ComputeMath.Abs(value)),
             new ComputeOptions { Backend = ComputeBackendKind.Scalar });
 
         float[] parallel = Compute.Run(
             source,
-            value => GpuMath.Sin(value) * 2.0f - GpuMath.Sqrt(GpuMath.Abs(value)),
+            value => ComputeMath.Sin(value) * 2.0f - ComputeMath.Sqrt(ComputeMath.Abs(value)),
             ParallelOptions);
 
         Assert.That(parallel, Is.EqualTo(scalar).Within(1e-6f));
@@ -36,12 +36,12 @@ public sealed class ParallelComputeTests
         float[] scalar = Compute.Zip(
             left,
             right,
-            (x, y) => x * y + GpuMath.Max(x, y),
+            (x, y) => x * y + ComputeMath.Max(x, y),
             new ComputeOptions { Backend = ComputeBackendKind.Scalar });
         float[] parallel = Compute.Zip(
             left,
             right,
-            (x, y) => x * y + GpuMath.Max(x, y),
+            (x, y) => x * y + ComputeMath.Max(x, y),
             ParallelOptions);
 
         Assert.That(parallel, Is.EqualTo(scalar).Within(1e-6f));

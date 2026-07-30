@@ -30,15 +30,15 @@ public sealed class SimdComputeTests
 
         float[] scalar = Compute.Run(
             source,
-            value => GpuMath.Clamp(
-                GpuMath.Abs(-value) * 1.5f + 0.25f,
+            value => ComputeMath.Clamp(
+                ComputeMath.Abs(-value) * 1.5f + 0.25f,
                 0.1f,
                 7f) / 2f,
             new ComputeOptions { Backend = ComputeBackendKind.Scalar });
         float[] simd = Compute.Run(
             source,
-            value => GpuMath.Clamp(
-                GpuMath.Abs(-value) * 1.5f + 0.25f,
+            value => ComputeMath.Clamp(
+                ComputeMath.Abs(-value) * 1.5f + 0.25f,
                 0.1f,
                 7f) / 2f,
             SimdOptions);
@@ -55,12 +55,12 @@ public sealed class SimdComputeTests
         float[] scalar = Compute.Zip(
             left,
             right,
-            (x, y) => GpuMath.Max(x * y, GpuMath.Min(x + y, 2f)),
+            (x, y) => ComputeMath.Max(x * y, ComputeMath.Min(x + y, 2f)),
             new ComputeOptions { Backend = ComputeBackendKind.Scalar });
         float[] simd = Compute.Zip(
             left,
             right,
-            (x, y) => GpuMath.Max(x * y, GpuMath.Min(x + y, 2f)),
+            (x, y) => ComputeMath.Max(x * y, ComputeMath.Min(x + y, 2f)),
             SimdOptions);
 
         Assert.That(simd, Is.EqualTo(scalar).Within(1e-6f));
@@ -108,7 +108,7 @@ public sealed class SimdComputeTests
 
         float[] result = Compute.Run(
             source,
-            value => GpuMath.Min(value / 0f, 1f),
+            value => ComputeMath.Min(value / 0f, 1f),
             SimdOptions);
 
         Assert.Multiple(() =>
@@ -133,12 +133,12 @@ public sealed class SimdComputeTests
         float[] minimum = Compute.Zip(
             left,
             right,
-            (x, y) => GpuMath.Min(x, y),
+            (x, y) => ComputeMath.Min(x, y),
             SimdOptions);
         float[] maximum = Compute.Zip(
             left,
             right,
-            (x, y) => GpuMath.Max(x, y),
+            (x, y) => ComputeMath.Max(x, y),
             SimdOptions);
 
         Assert.Multiple(() =>
@@ -157,7 +157,7 @@ public sealed class SimdComputeTests
             Assert.Throws<ComputeBackendUnavailableException>(
                 () => Compute.Run(
                     CreateSource(32),
-                    value => GpuMath.Sin(value),
+                    value => ComputeMath.Sin(value),
                     SimdOptions))!;
 
         Assert.That(exception.Backend, Is.EqualTo(ComputeBackendKind.Simd));
@@ -169,7 +169,7 @@ public sealed class SimdComputeTests
         Assert.That(
             () => Compute.Run(
                 CreateSource(16),
-                value => GpuMath.Clamp(value, 2f, 1f),
+                value => ComputeMath.Clamp(value, 2f, 1f),
                 SimdOptions),
             Throws.TypeOf<ArgumentException>());
     }
@@ -209,7 +209,7 @@ public sealed class SimdComputeTests
 
         ComputeResult<float[]> result = Compute.RunWithDiagnostics(
             CreateSource(16),
-            value => GpuMath.Sin(value),
+            value => ComputeMath.Sin(value),
             options);
 
         Assert.That(result.Diagnostics.Backend, Is.EqualTo(ComputeBackendKind.ParallelCpu));

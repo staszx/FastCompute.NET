@@ -39,5 +39,5 @@ public class PerformanceGateHeavyMapBenchmarks
     public float[] FastComputeAuto() =>
         Compute.Run(
             _source,
-            value => GpuMath.Sin(value) * GpuMath.Exp(-value * value));
+            value => ComputeMath.Sin(value) * ComputeMath.Exp(-value * value));
 }

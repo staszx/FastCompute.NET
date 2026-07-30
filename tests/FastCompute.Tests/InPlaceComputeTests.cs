@@ -20,12 +20,12 @@ public sealed class InPlaceComputeTests
         };
         float[] expected = Compute.Run(
             original,
-            value => GpuMath.Sin(value) * 2.0f + 1.0f,
+            value => ComputeMath.Sin(value) * 2.0f + 1.0f,
             new ComputeOptions { Backend = ComputeBackendKind.Scalar });
 
         float[] result = Compute.RunInPlace(
             source,
-            value => GpuMath.Sin(value) * 2.0f + 1.0f,
+            value => ComputeMath.Sin(value) * 2.0f + 1.0f,
             options);
 
         Assert.Multiple(() =>
@@ -45,16 +45,16 @@ public sealed class InPlaceComputeTests
         var options = new ComputeOptions { Backend = ComputeBackendKind.Simd };
         float[] expected = Compute.Run(
             original,
-            value => GpuMath.Clamp(
-                GpuMath.Abs(value) * 1.5f + 0.25f,
+            value => ComputeMath.Clamp(
+                ComputeMath.Abs(value) * 1.5f + 0.25f,
                 0.1f,
                 7.0f),
             new ComputeOptions { Backend = ComputeBackendKind.Scalar });
 
         float[] result = Compute.RunInPlace(
             source,
-            value => GpuMath.Clamp(
-                GpuMath.Abs(value) * 1.5f + 0.25f,
+            value => ComputeMath.Clamp(
+                ComputeMath.Abs(value) * 1.5f + 0.25f,
                 0.1f,
                 7.0f),
             options);
@@ -145,7 +145,7 @@ public sealed class InPlaceComputeTests
 
         ComputeResult<float[]> result = Compute.RunInPlaceWithDiagnostics(
             source,
-            value => GpuMath.Sin(value),
+            value => ComputeMath.Sin(value),
             options);
 
         Assert.That(
@@ -163,7 +163,7 @@ public sealed class InPlaceComputeTests
             Assert.Throws<ComputeBackendUnavailableException>(
                 () => Compute.RunInPlace(
                     [1.0f],
-                    value => GpuMath.Sin(value),
+                    value => ComputeMath.Sin(value),
                     options))!;
 
         Assert.That(

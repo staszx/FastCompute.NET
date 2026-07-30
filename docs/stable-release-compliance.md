@@ -6,6 +6,9 @@ review of the technical specification.
 FastCompute 0.6.0 adds the optimized lazy array pipeline and process-wide
 preferred-GPU configuration without changing the 0.5.0 execution contracts.
 
+FastCompute 0.7.0 introduces the backend-neutral `ComputeMath` name while
+retaining `GpuMath` as a source-compatible alias.
+
 ## Supported element types
 
 `float`, `double`, and `int` support one-shot Map, Zip, in-place operations,
@@ -13,7 +16,7 @@ Sum, Min, Max, Average, explicit Scalar/Parallel CPU/SIMD/ILGPU execution,
 automatic CPU selection, precompilation, prepared Map operations, and
 accelerator-resident buffers.
 
-Float expressions use `GpuMath`. Double and integer expressions use arithmetic
+Float expressions use `ComputeMath`. Double and integer expressions use arithmetic
 operators and supported `System.Math` overloads. Forced backends do not
 silently fall back.
 

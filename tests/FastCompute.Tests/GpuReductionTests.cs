@@ -180,7 +180,7 @@ public sealed class GpuReductionTests
             options);
         var heavy = Compute.RunWithDiagnostics(
             source,
-            value => GpuMath.Sin(value),
+            value => ComputeMath.Sin(value),
             options);
         float reduction = Compute.Max(source, options);
 
@@ -221,7 +221,7 @@ public sealed class GpuReductionTests
 
         var result = Compute.RunWithDiagnostics(
             source,
-            value => GpuMath.Sin(value),
+            value => ComputeMath.Sin(value),
             options);
 
         Assert.Multiple(() =>

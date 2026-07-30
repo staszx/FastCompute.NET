@@ -142,7 +142,7 @@ public sealed class SpecificationMatrixBenchmarks : BenchmarkData
                     _right,
                     (left, right) =>
                         left * right +
-                        GpuMath.Abs(left - right),
+                        ComputeMath.Abs(left - right),
                     options)[^1],
             SpecificationOperation.Sum => Compute.Sum(Source, options),
             SpecificationOperation.Min => Compute.Min(Source, options),
@@ -345,8 +345,8 @@ public sealed class SpecificationHeavyMapBenchmarks : BenchmarkData
         Compute.Run(
             Source,
             value =>
-                GpuMath.Sin(value) *
-                GpuMath.Exp(-value * value),
+                ComputeMath.Sin(value) *
+                ComputeMath.Exp(-value * value),
             options);
 }
 
@@ -373,7 +373,7 @@ public sealed class KernelLifecycleBenchmarks
                 AcceleratorIndex = NvidiaAcceleratorIndex
             });
         _warmContext.Precompile<float>(
-            value => GpuMath.Sin(value) * 2.0f);
+            value => ComputeMath.Sin(value) * 2.0f);
         _warmOptions = new ComputeOptions
         {
             Backend = ComputeBackendKind.Gpu,
@@ -394,7 +394,7 @@ public sealed class KernelLifecycleBenchmarks
             });
         return Compute.Run(
             _source,
-            value => GpuMath.Sin(value) * 2.0f,
+            value => ComputeMath.Sin(value) * 2.0f,
             new ComputeOptions
             {
                 Backend = ComputeBackendKind.Gpu,
@@ -406,7 +406,7 @@ public sealed class KernelLifecycleBenchmarks
     public float[] RepeatedRunWithWarmKernel() =>
         Compute.Run(
             _source,
-            value => GpuMath.Sin(value) * 2.0f,
+            value => ComputeMath.Sin(value) * 2.0f,
             _warmOptions);
 }
 

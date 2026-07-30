@@ -6,7 +6,7 @@ The SIMD backend implements the MVP contract from section 10 of the technical
 specification for `float` arrays:
 
 - `Add`, `Subtract`, `Multiply`, and `Divide`;
-- `GpuMath.Min`, `GpuMath.Max`, `GpuMath.Abs`, and `GpuMath.Clamp`;
+- `ComputeMath.Min`, `ComputeMath.Max`, `ComputeMath.Abs`, and `ComputeMath.Clamp`;
 - unary negation;
 - Map, in-place Map, Zip, Sum, Min, Max, and Average;
 - scalar processing of the final incomplete vector.
@@ -31,7 +31,7 @@ back to the same location. The scalar tail is then overwritten element by
 element. This is safe because unary Map plans have no cross-index dependencies.
 
 `Min` and `Max` add handling for NaN and signed zero so their result matches the
-scalar `GpuMath` contract rather than the raw AVX operand-selection behavior.
+scalar `ComputeMath` contract rather than the raw AVX operand-selection behavior.
 `Clamp` also checks invalid minimum/maximum bounds.
 
 ## Supported plans and fallback

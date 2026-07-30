@@ -4,7 +4,7 @@ FastCompute.NET is a strongly named .NET 8 library for fast array processing.
 It provides one API for single-threaded CPU, multi-threaded CPU, SIMD, and
 ILGPU execution and supports `float`, `double`, and `int` arrays.
 
-Version `0.6.0` is the current stable release. The assembly public key token is
+Version `0.7.0` is the current stable release. The assembly public key token is
 `c76a60c96d65300c`.
 
 ## Quick start
@@ -12,7 +12,7 @@ Version `0.6.0` is the current stable release. The assembly public key token is
 ### 1. Install the package
 
 ```powershell
-dotnet add package FastCompute --version 0.6.0
+dotnet add package FastCompute --version 0.7.0
 ```
 
 The consuming project must target .NET 8 or a compatible later framework.
@@ -28,9 +28,12 @@ float[] result = source
     .AsCompute()
     .Select(value => value * 2.0f)
     .SelectInPlace(value => value + 1.0f)
-    .Select(value => GpuMath.Sin(value))
+    .Select(value => ComputeMath.Sin(value))
     .ToArray();
 ```
+
+`ComputeMath` describes mathematical operations that every compatible backend
+can execute. Its use does not select or force GPU execution.
 
 Nothing is executed before `ToArray`. FastCompute fuses the three selectors
 into one expression, selects a backend once, and avoids intermediate managed
@@ -58,7 +61,7 @@ using ComputeContext context = ComputeContext.Create(
 float[] result = source
     .AsCompute(context)
     .Select(value => value * 2.0f)
-    .Select(value => GpuMath.Sin(value))
+    .Select(value => ComputeMath.Sin(value))
     .ToArray();
 ```
 
@@ -76,7 +79,7 @@ float[] gpuResult = source
             GpuContext = context
         })
     .Select(value => value * 2.0f)
-    .Select(value => GpuMath.Sin(value))
+    .Select(value => ComputeMath.Sin(value))
     .ToArray();
 ```
 
@@ -118,7 +121,7 @@ ComputePipeline<float> pipeline = source
     .AsCompute()
     .Select(value => value * 2.0f)
     .SelectInPlace(value => value + 1.0f)
-    .Select(value => GpuMath.Clamp(value, 0.0f, 1.0f));
+    .Select(value => ComputeMath.Clamp(value, 0.0f, 1.0f));
 
 // Planning, optimization, backend selection, and execution happen here.
 float[] result = pipeline.ToArray();
@@ -190,7 +193,7 @@ array:
 ```csharp
 float[] mapped = Compute.Run(
     source,
-    value => GpuMath.Clamp(value * 1.25f, 0.0f, 1.0f));
+    value => ComputeMath.Clamp(value * 1.25f, 0.0f, 1.0f));
 ```
 
 #### Zip
@@ -249,12 +252,16 @@ the array element type, so integer average uses integer semantics.
 | `int` | Yes | Yes | Yes | Yes | No |
 
 Float expressions support arithmetic, comparisons, conditional expressions,
-captured primitive constants, and these `GpuMath` methods:
+captured primitive constants, and these `ComputeMath` methods:
 
 - `Abs`, `Min`, `Max`, and `Clamp`;
 - `Sqrt`, `Pow`, `Exp`, `Log`, and `Log10`;
 - `Sin`, `Cos`, and `Tan`;
 - `Floor`, `Ceiling`, and `Round`.
+
+The name is intentionally backend-neutral: `ComputeMath.Sin`, for example, can
+run on Scalar CPU, Parallel CPU, SIMD, or GPU. The older `GpuMath` name remains
+available as a compatibility alias.
 
 ```csharp
 float multiplier = 0.75f;
@@ -263,8 +270,8 @@ bool clamp = true;
 float[] result = Compute.Run(
     source,
     value => clamp
-        ? GpuMath.Clamp(GpuMath.Sin(value) * multiplier, 0.0f, 1.0f)
-        : GpuMath.Sin(value) * multiplier);
+        ? ComputeMath.Clamp(ComputeMath.Sin(value) * multiplier, 0.0f, 1.0f)
+        : ComputeMath.Sin(value) * multiplier);
 ```
 
 Double and integer expressions use arithmetic and the applicable supported
@@ -377,7 +384,7 @@ ComputeDeviceInfo preferredGpu = ComputeContext.GetAccelerators()
 
 ComputeResult<float[]> result = Compute.RunWithDiagnostics(
     source,
-    value => GpuMath.Sin(value) * GpuMath.Exp(-value * value),
+    value => ComputeMath.Sin(value) * ComputeMath.Exp(-value * value),
     new ComputeOptions
     {
         Backend = ComputeBackendKind.Auto,
@@ -404,7 +411,7 @@ Console.WriteLine($"Selected accelerator: {gpu.DeviceName}");
 
 float[] gpuResult = Compute.Run(
     source,
-    value => GpuMath.Sin(value),
+    value => ComputeMath.Sin(value),
     new ComputeOptions
     {
         Backend = ComputeBackendKind.Gpu,
@@ -436,12 +443,12 @@ their own GPU setting:
 // Considers the default GPU, but can still select CPU or SIMD.
 float[] automatic = Compute.Run(
     source,
-    value => GpuMath.Sin(value));
+    value => ComputeMath.Sin(value));
 
 // Requires GPU and uses the default preferred accelerator.
 float[] forcedGpu = Compute.Run(
     source,
-    value => GpuMath.Sin(value),
+    value => ComputeMath.Sin(value),
     new ComputeOptions
     {
         Backend = ComputeBackendKind.Gpu
@@ -494,7 +501,7 @@ Use `Precompile<T>` to validate, lower, and cache a particular expression:
 ```csharp
 ComputeCompilationResult compilation =
     gpu.Precompile<float>(
-        value => GpuMath.Sin(value) * GpuMath.Exp(-value));
+        value => ComputeMath.Sin(value) * ComputeMath.Exp(-value));
 
 Console.WriteLine($"Cache hit: {compilation.CacheHit}");
 Console.WriteLine($"Compile time: {compilation.CompilationTime}");
@@ -504,7 +511,7 @@ For an operation that will be called repeatedly, create a prepared operation:
 
 ```csharp
 PreparedCompute<float> prepared =
-    gpu.Prepare<float>(value => GpuMath.Sin(value) * 2.0f);
+    gpu.Prepare<float>(value => ComputeMath.Sin(value) * 2.0f);
 
 float[] first = prepared.Run(source);
 float[] second = prepared.Run(otherSource);
@@ -523,7 +530,7 @@ set is limited by the context safety limit and optional operation budget:
 ```csharp
 float[] result = Compute.Run(
     source,
-    value => GpuMath.Sin(value),
+    value => ComputeMath.Sin(value),
     new ComputeOptions
     {
         Backend = ComputeBackendKind.Gpu,
@@ -543,7 +550,7 @@ using two accelerator streams:
 ```csharp
 float[] result = Compute.Run(
     source,
-    value => GpuMath.Sin(value),
+    value => ComputeMath.Sin(value),
     new ComputeOptions
     {
         Backend = ComputeBackendKind.Gpu,
@@ -566,7 +573,7 @@ using ComputeBuffer<float> input = gpu.Upload(source);
 using ComputeBuffer<float> scaled =
     input.Select(value => value * 0.75f);
 using ComputeBuffer<float> transformed =
-    scaled.Select(value => GpuMath.Sin(value));
+    scaled.Select(value => ComputeMath.Sin(value));
 
 float sum = transformed.Sum();
 
@@ -766,7 +773,7 @@ dotnet run --project samples/FastCompute.Sample.Console `
 ```powershell
 dotnet build FastCompute.sln --configuration Release
 dotnet test FastCompute.sln --configuration Release --no-build
-./pack.ps1 -Version 0.6.0
+./pack.ps1 -Version 0.7.0
 ```
 
 `pack.ps1` builds and tests the solution, creates `.nupkg` and `.snupkg`
@@ -774,7 +781,7 @@ artifacts, verifies the strong-name identity, and runs a package-only consumer
 smoke test. On a Windows or Linux CI machine without a hardware GPU:
 
 ```powershell
-./pack.ps1 -Version 0.6.0 -SkipGpuTests
+./pack.ps1 -Version 0.7.0 -SkipGpuTests
 ```
 
 ## Further documentation

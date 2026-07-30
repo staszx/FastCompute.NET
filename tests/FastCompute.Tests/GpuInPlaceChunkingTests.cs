@@ -23,7 +23,7 @@ public sealed class GpuInPlaceChunkingTests
 
         var result = Compute.RunInPlaceWithDiagnostics(
             source,
-            value => GpuMath.Sin(value) + value * value,
+            value => ComputeMath.Sin(value) + value * value,
             options);
         float[] expected = original
             .Select(value => MathF.Sin(value) + value * value)
@@ -68,7 +68,7 @@ public sealed class GpuInPlaceChunkingTests
 
         var result = Compute.RunInPlaceWithDiagnostics(
             source,
-            value => GpuMath.Sin(value) + GpuMath.Exp(value),
+            value => ComputeMath.Sin(value) + ComputeMath.Exp(value),
             options);
 
         Assert.Multiple(() =>
@@ -103,7 +103,7 @@ public sealed class GpuInPlaceChunkingTests
             target,
             right,
             (left, value) =>
-                left * value + GpuMath.Sqrt(GpuMath.Abs(left - value)),
+                left * value + ComputeMath.Sqrt(ComputeMath.Abs(left - value)),
             options);
         float[] expected = original
             .Zip(
@@ -159,7 +159,7 @@ public sealed class GpuInPlaceChunkingTests
             target,
             right,
             (left, value) =>
-                GpuMath.Sin(left) + GpuMath.Exp(value),
+                ComputeMath.Sin(left) + ComputeMath.Exp(value),
             options);
 
         Assert.Multiple(() =>

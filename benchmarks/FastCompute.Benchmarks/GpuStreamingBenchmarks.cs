@@ -47,8 +47,8 @@ public class GpuStreamingBenchmarks
 
         _context.Precompile<float>(
             value =>
-                GpuMath.Sin(value) *
-                GpuMath.Exp(-value * value));
+                ComputeMath.Sin(value) *
+                ComputeMath.Exp(-value * value));
     }
 
     [GlobalCleanup]
@@ -59,8 +59,8 @@ public class GpuStreamingBenchmarks
         Compute.Run(
             _source,
             value =>
-                GpuMath.Sin(value) *
-                GpuMath.Exp(-value * value),
+                ComputeMath.Sin(value) *
+                ComputeMath.Exp(-value * value),
             _sequentialOptions);
 
     [Benchmark]
@@ -68,7 +68,7 @@ public class GpuStreamingBenchmarks
         Compute.Run(
             _source,
             value =>
-                GpuMath.Sin(value) *
-                GpuMath.Exp(-value * value),
+                ComputeMath.Sin(value) *
+                ComputeMath.Exp(-value * value),
             _streamingOptions);
 }

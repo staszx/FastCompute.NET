@@ -37,14 +37,14 @@ public sealed class ComputeTests
     }
 
     [Test]
-    public void Run_AppliesGpuMathExpression()
+    public void Run_AppliesComputeMathExpression()
     {
         float[] source = [-0.5f, 0.0f, 0.5f];
 
         float[] result = Compute.Run(
             source,
-            value => GpuMath.Clamp(
-                GpuMath.Sin(value) * GpuMath.Exp(-value * value),
+            value => ComputeMath.Clamp(
+                ComputeMath.Sin(value) * ComputeMath.Exp(-value * value),
                 -1.0f,
                 1.0f));
 
@@ -91,7 +91,7 @@ public sealed class ComputeTests
     public void Run_UsesFloatDivisionAndSqrtSemantics()
     {
         float[] division = Compute.Run([1.0f, -1.0f], value => value / 0.0f);
-        float[] squareRoot = Compute.Run([-1.0f], value => GpuMath.Sqrt(value));
+        float[] squareRoot = Compute.Run([-1.0f], value => ComputeMath.Sqrt(value));
 
         Assert.Multiple(() =>
         {
@@ -142,7 +142,7 @@ public sealed class ComputeTests
         {
             Assert.That(exception.NodeType, Is.EqualTo(System.Linq.Expressions.ExpressionType.Call));
             Assert.That(exception.ExpressionFragment, Does.Contain("Sin"));
-            Assert.That(exception.Message, Does.Contain("GpuMath"));
+            Assert.That(exception.Message, Does.Contain("ComputeMath"));
         });
     }
 

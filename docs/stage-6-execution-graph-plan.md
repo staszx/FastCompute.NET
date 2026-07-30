@@ -40,8 +40,8 @@ The public chaining syntax remains unchanged:
 ```csharp
 using ComputeBuffer<float> result = source
     .Select(value => value * 2.0f)
-    .Select(value => GpuMath.Sin(value))
-    .Select(value => GpuMath.Clamp(value, 0.0f, 1.0f));
+    .Select(value => ComputeMath.Sin(value))
+    .Select(value => ComputeMath.Clamp(value, 0.0f, 1.0f));
 ```
 
 ## Graph model

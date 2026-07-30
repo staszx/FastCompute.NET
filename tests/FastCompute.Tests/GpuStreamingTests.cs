@@ -23,14 +23,14 @@ public sealed class GpuStreamingTests
         float[] expected = Compute.Run(
             source,
             value =>
-                GpuMath.Sin(value) *
-                GpuMath.Exp(-value * value),
+                ComputeMath.Sin(value) *
+                ComputeMath.Exp(-value * value),
             options);
         float[] actual = Compute.Run(
             source,
             value =>
-                GpuMath.Sin(value) *
-                GpuMath.Exp(-value * value),
+                ComputeMath.Sin(value) *
+                ComputeMath.Exp(-value * value),
             new ComputeOptions
             {
                 Backend = ComputeBackendKind.Gpu,
@@ -140,8 +140,8 @@ public sealed class GpuStreamingTests
         var result = Compute.RunWithDiagnostics(
             source,
             value =>
-                GpuMath.Sin(value) *
-                GpuMath.Exp(-value * value),
+                ComputeMath.Sin(value) *
+                ComputeMath.Exp(-value * value),
             options);
         float[] expected = source
             .Select(

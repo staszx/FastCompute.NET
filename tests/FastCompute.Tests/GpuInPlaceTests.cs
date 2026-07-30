@@ -14,9 +14,9 @@ public sealed class GpuInPlaceTests
         float[] original = (float[])source.Clone();
         float[] expected = Compute.Run(
             original,
-            value => GpuMath.Clamp(
-                GpuMath.Sin(value) * GpuMath.Exp(-value * value) +
-                GpuMath.Sqrt(GpuMath.Abs(value)),
+            value => ComputeMath.Clamp(
+                ComputeMath.Sin(value) * ComputeMath.Exp(-value * value) +
+                ComputeMath.Sqrt(ComputeMath.Abs(value)),
                 -2.0f,
                 2.0f),
             new ComputeOptions { Backend = ComputeBackendKind.Scalar });
@@ -28,9 +28,9 @@ public sealed class GpuInPlaceTests
 
         var result = Compute.RunInPlaceWithDiagnostics(
             source,
-            value => GpuMath.Clamp(
-                GpuMath.Sin(value) * GpuMath.Exp(-value * value) +
-                GpuMath.Sqrt(GpuMath.Abs(value)),
+            value => ComputeMath.Clamp(
+                ComputeMath.Sin(value) * ComputeMath.Exp(-value * value) +
+                ComputeMath.Sqrt(ComputeMath.Abs(value)),
                 -2.0f,
                 2.0f),
             options);
@@ -73,9 +73,9 @@ public sealed class GpuInPlaceTests
         float[] single = [0.25f];
 
         float[] emptyResult =
-            Compute.RunInPlace(empty, value => GpuMath.Sin(value), options);
+            Compute.RunInPlace(empty, value => ComputeMath.Sin(value), options);
         float[] singleResult =
-            Compute.RunInPlace(single, value => GpuMath.Sin(value), options);
+            Compute.RunInPlace(single, value => ComputeMath.Sin(value), options);
 
         Assert.Multiple(() =>
         {
@@ -117,11 +117,11 @@ public sealed class GpuInPlaceTests
 
         var first = Compute.RunInPlaceWithDiagnostics(
             firstSource,
-            value => GpuMath.Sin(value),
+            value => ComputeMath.Sin(value),
             options);
         var second = Compute.RunInPlaceWithDiagnostics(
             secondSource,
-            value => GpuMath.Sin(value),
+            value => ComputeMath.Sin(value),
             options);
         ComputeMemoryPoolStatistics pool = context.MemoryPoolStatistics;
 
@@ -175,7 +175,7 @@ public sealed class GpuInPlaceTests
 
         var result = Compute.RunInPlaceWithDiagnostics(
             source,
-            value => GpuMath.Sin(value) * GpuMath.Exp(-value * value),
+            value => ComputeMath.Sin(value) * ComputeMath.Exp(-value * value),
             options);
 
         Assert.Multiple(() =>
@@ -207,7 +207,7 @@ public sealed class GpuInPlaceTests
 
         var result = Compute.RunInPlaceWithDiagnostics(
             source,
-            value => GpuMath.Sin(value),
+            value => ComputeMath.Sin(value),
             options);
 
         Assert.Multiple(() =>

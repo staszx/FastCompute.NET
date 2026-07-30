@@ -9,21 +9,21 @@ internal static class ComputeExpressionParser
     private static readonly IReadOnlyDictionary<string, (ComputeFunction Function, int Arity)> SupportedFunctions =
         new Dictionary<string, (ComputeFunction, int)>(StringComparer.Ordinal)
         {
-            [nameof(GpuMath.Abs)] = (ComputeFunction.Abs, 1),
-            [nameof(GpuMath.Min)] = (ComputeFunction.Min, 2),
-            [nameof(GpuMath.Max)] = (ComputeFunction.Max, 2),
-            [nameof(GpuMath.Clamp)] = (ComputeFunction.Clamp, 3),
-            [nameof(GpuMath.Sqrt)] = (ComputeFunction.Sqrt, 1),
-            [nameof(GpuMath.Sin)] = (ComputeFunction.Sin, 1),
-            [nameof(GpuMath.Cos)] = (ComputeFunction.Cos, 1),
-            [nameof(GpuMath.Tan)] = (ComputeFunction.Tan, 1),
-            [nameof(GpuMath.Exp)] = (ComputeFunction.Exp, 1),
-            [nameof(GpuMath.Log)] = (ComputeFunction.Log, 1),
-            [nameof(GpuMath.Log10)] = (ComputeFunction.Log10, 1),
-            [nameof(GpuMath.Pow)] = (ComputeFunction.Pow, 2),
-            [nameof(GpuMath.Floor)] = (ComputeFunction.Floor, 1),
-            [nameof(GpuMath.Ceiling)] = (ComputeFunction.Ceiling, 1),
-            [nameof(GpuMath.Round)] = (ComputeFunction.Round, 1)
+            [nameof(ComputeMath.Abs)] = (ComputeFunction.Abs, 1),
+            [nameof(ComputeMath.Min)] = (ComputeFunction.Min, 2),
+            [nameof(ComputeMath.Max)] = (ComputeFunction.Max, 2),
+            [nameof(ComputeMath.Clamp)] = (ComputeFunction.Clamp, 3),
+            [nameof(ComputeMath.Sqrt)] = (ComputeFunction.Sqrt, 1),
+            [nameof(ComputeMath.Sin)] = (ComputeFunction.Sin, 1),
+            [nameof(ComputeMath.Cos)] = (ComputeFunction.Cos, 1),
+            [nameof(ComputeMath.Tan)] = (ComputeFunction.Tan, 1),
+            [nameof(ComputeMath.Exp)] = (ComputeFunction.Exp, 1),
+            [nameof(ComputeMath.Log)] = (ComputeFunction.Log, 1),
+            [nameof(ComputeMath.Log10)] = (ComputeFunction.Log10, 1),
+            [nameof(ComputeMath.Pow)] = (ComputeFunction.Pow, 2),
+            [nameof(ComputeMath.Floor)] = (ComputeFunction.Floor, 1),
+            [nameof(ComputeMath.Ceiling)] = (ComputeFunction.Ceiling, 1),
+            [nameof(ComputeMath.Round)] = (ComputeFunction.Round, 1)
         };
 
     internal static ComputeExpressionPlan Parse(LambdaExpression expression)
@@ -133,7 +133,8 @@ internal static class ComputeExpressionParser
         MethodCallExpression expression,
         IReadOnlyDictionary<ParameterExpression, int> parameterIndexes)
     {
-        if (expression.Method.DeclaringType != typeof(GpuMath) ||
+        if ((expression.Method.DeclaringType != typeof(ComputeMath) &&
+             expression.Method.DeclaringType != typeof(GpuMath)) ||
             !SupportedFunctions.TryGetValue(expression.Method.Name, out var function) ||
             expression.Arguments.Count != function.Arity)
         {
@@ -251,5 +252,8 @@ internal static class ComputeExpressionParser
             expression.NodeType,
             expression.ToString(),
             description,
-            ["Only arithmetic operators and methods declared in GpuMath are allowed."]);
+            [
+                "Only arithmetic operators and methods declared in " +
+                "ComputeMath are allowed. GpuMath remains a compatibility alias."
+            ]);
 }

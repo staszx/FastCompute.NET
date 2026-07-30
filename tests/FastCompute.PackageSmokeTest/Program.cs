@@ -69,7 +69,7 @@ if (hardwareGpu is not null)
         ComputeDefaults.PreferredGpuAcceleratorIndex = hardwareGpu.Index;
         var gpuResult = Compute.RunWithDiagnostics(
             source,
-            value => GpuMath.Sin(value),
+            value => ComputeMath.Sin(value),
             new ComputeOptions
             {
                 Backend = ComputeBackendKind.Gpu

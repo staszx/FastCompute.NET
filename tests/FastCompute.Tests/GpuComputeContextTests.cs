@@ -14,10 +14,10 @@ public sealed class GpuComputeContextTests
 
         float[] result = context.Run(
             source,
-            value => GpuMath.Sin(value) * GpuMath.Exp(-value));
+            value => ComputeMath.Sin(value) * ComputeMath.Exp(-value));
 
         float[] expected = source
-            .Select(value => GpuMath.Sin(value) * GpuMath.Exp(-value))
+            .Select(value => ComputeMath.Sin(value) * ComputeMath.Exp(-value))
             .ToArray();
         Assert.That(result, Is.EqualTo(expected).Within(1e-5f));
     }
@@ -32,7 +32,7 @@ public sealed class GpuComputeContextTests
         float[] result = context.Zip(
             left,
             right,
-            (x, y) => GpuMath.Clamp(x * y + 1f, 0f, 25f));
+            (x, y) => ComputeMath.Clamp(x * y + 1f, 0f, 25f));
 
         Assert.That(result, Is.EqualTo(new[] { 6f, 13f, 22f, 25f }).Within(1e-5f));
     }
@@ -42,7 +42,7 @@ public sealed class GpuComputeContextTests
     {
         using ComputeContext context = CreateTestContext();
         Expression<Func<float, float>> expression =
-            value => GpuMath.Sqrt(value) + 2f;
+            value => ComputeMath.Sqrt(value) + 2f;
 
         ComputeCompilationResult first = context.Precompile(expression);
         ComputeCompilationResult second = context.Precompile(expression);

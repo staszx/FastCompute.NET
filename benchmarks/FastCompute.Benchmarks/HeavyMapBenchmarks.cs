@@ -43,19 +43,19 @@ public class HeavyMapBenchmarks : BenchmarkData
     public float[] FastComputeScalar() =>
         Compute.Run(
             Source,
-            value => GpuMath.Sin(value) * GpuMath.Exp(-value * value),
+            value => ComputeMath.Sin(value) * ComputeMath.Exp(-value * value),
             ScalarOptions);
 
     [Benchmark]
     public float[] FastComputeParallel() =>
         Compute.Run(
             Source,
-            value => GpuMath.Sin(value) * GpuMath.Exp(-value * value),
+            value => ComputeMath.Sin(value) * ComputeMath.Exp(-value * value),
             ParallelOptions);
 
     [Benchmark]
     public float[] FastComputeAuto() =>
         Compute.Run(
             Source,
-            value => GpuMath.Sin(value) * GpuMath.Exp(-value * value));
+            value => ComputeMath.Sin(value) * ComputeMath.Exp(-value * value));
 }

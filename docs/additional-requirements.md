@@ -74,7 +74,7 @@ GPU-совместимым.
 
 ```csharp
 float[] result = source.RunExplicit(
-    value => GpuMath.Sin(value),
+    value => ComputeMath.Sin(value),
     new ComputeOptions
     {
         Backend = ComputeBackendKind.Gpu,

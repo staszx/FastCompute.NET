@@ -10,7 +10,7 @@ ILGPU backends. It intentionally supports only fixed-length one-dimensional
 
 1. `Compute.Run` or `Compute.Zip` validates public arguments and options.
 2. `ComputeExpressionParser` accepts only typed parameters, `float` constants,
-   arithmetic operators, and methods declared by `GpuMath`.
+   arithmetic operators, and methods declared by `ComputeMath`.
 3. The parser produces an ILGPU-independent `ComputeExpressionPlan` containing
    immutable IR nodes.
 4. `StrictComputeOptimizer` folds constant-only subtrees and performs only
@@ -36,7 +36,7 @@ expression plan.
   infinity results. It also keeps `x + 0` because removing it changes the sign
   of negative zero.
 - Reflection is used only once during static Scalar compiler initialization to
-  map known `GpuMath` methods. It is not used in element-processing loops.
+  map known `ComputeMath` methods. It is not used in element-processing loops.
 
 ## Known limitations
 

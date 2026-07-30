@@ -15,7 +15,7 @@ public sealed class ComputePipelineTests
                 })
             .Select(value => value * 2.0f)
             .SelectInPlace(value => value + 1.0f)
-            .Select(value => GpuMath.Clamp(value, 0.0f, 2.0f));
+            .Select(value => ComputeMath.Clamp(value, 0.0f, 2.0f));
 
         float[] result = pipeline.ToArray();
 

@@ -76,7 +76,7 @@ Expression-specific preparation validates and lowers the expression as well:
 ```csharp
 ComputeCompilationResult map =
     context.Precompile<float>(
-        x => GpuMath.Sin(x) * GpuMath.Exp(x));
+        x => ComputeMath.Sin(x) * ComputeMath.Exp(x));
 
 ComputeCompilationResult zip =
     context.Precompile<float>(
@@ -88,7 +88,7 @@ Several expressions can be prepared together:
 ```csharp
 context.Precompile(
     ComputeKernel.Map<float>(x => x * 2.0f),
-    ComputeKernel.Map<float>(x => GpuMath.Sin(x)),
+    ComputeKernel.Map<float>(x => ComputeMath.Sin(x)),
     ComputeKernel.Zip<float>((x, y) => x + y));
 ```
 
@@ -104,7 +104,7 @@ the caches between calls:
 ```csharp
 float[] result = Compute.Run(
     source,
-    x => GpuMath.Sin(x),
+    x => ComputeMath.Sin(x),
     new ComputeOptions
     {
         Backend = ComputeBackendKind.Gpu,
@@ -121,7 +121,7 @@ lowering, structural hashing, and cache lookup:
 
 ```csharp
 PreparedCompute<float> operation =
-    context.Prepare<float>(x => GpuMath.Sin(x) * GpuMath.Exp(x));
+    context.Prepare<float>(x => ComputeMath.Sin(x) * ComputeMath.Exp(x));
 
 float[] first = operation.Run(data1);
 float[] second = operation.Run(data2);
@@ -132,7 +132,7 @@ GPU-resident buffers avoid intermediate host transfers:
 ```csharp
 using ComputeBuffer<float> input = context.Upload(source);
 using ComputeBuffer<float> mapped =
-    input.Select(x => GpuMath.Sin(x));
+    input.Select(x => ComputeMath.Sin(x));
 using ComputeBuffer<float> combined =
     mapped.Zip(input, (x, y) => x + y);
 
@@ -165,7 +165,7 @@ streaming:
 ```csharp
 float[] result = Compute.Run(
     source,
-    x => GpuMath.Sin(x),
+    x => ComputeMath.Sin(x),
     new ComputeOptions
     {
         Backend = ComputeBackendKind.Gpu,

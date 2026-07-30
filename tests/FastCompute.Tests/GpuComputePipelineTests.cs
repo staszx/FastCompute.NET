@@ -35,8 +35,8 @@ public sealed class GpuComputePipelineTests
                     GpuContext = context
                 })
             .Select(value => value * 0.75f)
-            .SelectInPlace(value => GpuMath.Sin(value))
-            .Select(value => GpuMath.Clamp(value, -0.5f, 0.5f))
+            .SelectInPlace(value => ComputeMath.Sin(value))
+            .Select(value => ComputeMath.Clamp(value, -0.5f, 0.5f))
             .ToArray();
 
         Assert.That(

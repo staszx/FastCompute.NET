@@ -2,6 +2,26 @@
 
 All notable changes to FastCompute.NET are documented in this file.
 
+## 0.7.0 - 2026-07-30
+
+Backend-neutral math API release.
+
+### Added
+
+- `ComputeMath` expression functions for Scalar CPU, Parallel CPU, SIMD, and
+  GPU execution.
+
+### Changed
+
+- Quick Start, samples, tests, benchmarks, and architecture documentation now
+  use `ComputeMath`, making it clear that math expressions do not force GPU
+  execution.
+
+### Compatibility
+
+- The original `GpuMath` API remains fully supported as an alias of
+  `ComputeMath`.
+
 ## 0.6.0 - 2026-07-30
 
 Stable lazy-pipeline release.

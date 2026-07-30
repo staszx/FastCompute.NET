@@ -48,14 +48,14 @@ public class GpuChunkingBenchmarks
     public float[] MapSingleAllocation() =>
         Compute.Run(
             _left,
-            value => GpuMath.Sin(value) * GpuMath.Exp(-value * value),
+            value => ComputeMath.Sin(value) * ComputeMath.Exp(-value * value),
             _fullOptions);
 
     [Benchmark]
     public float[] MapChunked() =>
         Compute.Run(
             _left,
-            value => GpuMath.Sin(value) * GpuMath.Exp(-value * value),
+            value => ComputeMath.Sin(value) * ComputeMath.Exp(-value * value),
             _chunkedOptions);
 
     [Benchmark]
@@ -64,7 +64,7 @@ public class GpuChunkingBenchmarks
             _left,
             _right,
             (left, right) =>
-                left * right + GpuMath.Sqrt(GpuMath.Abs(left - right)),
+                left * right + ComputeMath.Sqrt(ComputeMath.Abs(left - right)),
             _fullOptions);
 
     [Benchmark]
@@ -73,6 +73,6 @@ public class GpuChunkingBenchmarks
             _left,
             _right,
             (left, right) =>
-                left * right + GpuMath.Sqrt(GpuMath.Abs(left - right)),
+                left * right + ComputeMath.Sqrt(ComputeMath.Abs(left - right)),
             _chunkedOptions);
 }

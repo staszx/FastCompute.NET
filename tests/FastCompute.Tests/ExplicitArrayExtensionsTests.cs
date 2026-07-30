@@ -78,7 +78,7 @@ public sealed class ExplicitArrayExtensionsTests
 
         ComputeResult<float[]> result =
             source.RunExplicitWithDiagnostics(
-                value => GpuMath.Sin(value),
+                value => ComputeMath.Sin(value),
                 options);
 
         TestContext.Out.WriteLine(
@@ -126,7 +126,7 @@ public sealed class ExplicitArrayExtensionsTests
         ComputeBackendUnavailableException exception =
             Assert.Throws<ComputeBackendUnavailableException>(
                 () => source.RunExplicit(
-                    value => GpuMath.Sin(value),
+                    value => ComputeMath.Sin(value),
                     new ComputeOptions
                     {
                         Backend = ComputeBackendKind.Simd,

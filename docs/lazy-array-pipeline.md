@@ -10,7 +10,7 @@ float[] result = source
     .AsCompute()
     .Select(value => value * 2.0f)
     .SelectInPlace(value => value + 1.0f)
-    .Select(value => GpuMath.Sin(value))
+    .Select(value => ComputeMath.Sin(value))
     .ToArray();
 ```
 

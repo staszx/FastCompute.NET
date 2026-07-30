@@ -8,7 +8,7 @@ float[] source = Enumerable.Range(0, 1_000_000)
 float multiplier = 0.75f;
 ComputeResult<float[]> automatic = Compute.RunWithDiagnostics(
     source,
-    value => GpuMath.Sin(value * multiplier) * GpuMath.Exp(-value),
+    value => ComputeMath.Sin(value * multiplier) * ComputeMath.Exp(-value),
     new ComputeOptions
     {
         Backend = ComputeBackendKind.Auto
@@ -21,8 +21,8 @@ Console.WriteLine($"First result: {automatic.Value[0]}");
 float[] pipelineResult = source
     .AsCompute()
     .Select(value => value * multiplier)
-    .SelectInPlace(value => GpuMath.Sin(value))
-    .Select(value => GpuMath.Clamp(value, 0.0f, 1.0f))
+    .SelectInPlace(value => ComputeMath.Sin(value))
+    .Select(value => ComputeMath.Clamp(value, 0.0f, 1.0f))
     .ToArray();
 Console.WriteLine($"Lazy pipeline result count: {pipelineResult.Length}");
 
@@ -38,8 +38,8 @@ using ComputeBuffer<float> input = context.Upload(source);
 using ComputeBuffer<float> scaled =
     input.Select(value => value * multiplier);
 using ComputeBuffer<float> result = scaled
-    .Select(value => GpuMath.Sin(value))
-    .Select(value => GpuMath.Clamp(value, 0.0f, 1.0f));
+    .Select(value => ComputeMath.Sin(value))
+    .Select(value => ComputeMath.Clamp(value, 0.0f, 1.0f));
 
 float[] output = new float[result.Length];
 result.Download(output);
