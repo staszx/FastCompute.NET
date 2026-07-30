@@ -2,6 +2,27 @@
 
 All notable changes to FastCompute.NET are documented in this file.
 
+## 0.6.0 - 2026-07-30
+
+Stable lazy-pipeline release.
+
+### Added
+
+- Lazy `AsCompute` array pipelines for `float`, `double`, and `int`.
+- Automatic fusion of consecutive unary selectors into one optimized Map.
+- Branch-safe `SelectInPlace`, explicit `ToArrayInPlace`, and `Sum`, `Min`,
+  `Max`, and `Average` terminals.
+- `AsCompute()` overloads for automatic execution, `ComputeOptions`, and a
+  reusable `ComputeContext`.
+- Process-wide `ComputeDefaults.PreferredGpuAcceleratorIndex` with
+  per-operation GPU settings taking precedence.
+- Pipeline correctness, CUDA integration, package smoke, and BenchmarkDotNet
+  allocation/performance coverage.
+
+### Changed
+
+- The Quick Start now uses the optimized lazy pipeline as the primary API.
+
 ## 0.5.0 - 2026-07-28
 
 First stable release.

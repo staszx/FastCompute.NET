@@ -3,6 +3,9 @@
 FastCompute 0.5.0 closes the implementation gaps identified during the final
 review of the technical specification.
 
+FastCompute 0.6.0 adds the optimized lazy array pipeline and process-wide
+preferred-GPU configuration without changing the 0.5.0 execution contracts.
+
 ## Supported element types
 
 `float`, `double`, and `int` support one-shot Map, Zip, in-place operations,
@@ -27,6 +30,14 @@ contract.
 `Location` distinguishes host memory owned by an ILGPU CPU accelerator from
 hardware device memory.
 
+## Lazy optimized pipelines
+
+`AsCompute` creates an immutable lazy pipeline for `float`, `double`, and
+`int` arrays. Consecutive unary selectors are composed into one expression at
+`ToArray`, so backend selection, array traversal, and GPU Map execution happen
+once without managed intermediate arrays. `ToArrayInPlace` is the explicit
+source-mutating terminal; normal `ToArray` remains branch-safe.
+
 ## Memory pool
 
 The transient float-buffer pool is context-local and thread-safe.
@@ -49,6 +60,8 @@ without artificial `Task.Run` scheduling.
   across `for`, `Parallel.For`, SIMD, ILGPU CPU, CUDA, and Auto.
 - Dedicated benchmarks compare first and repeated GPU runs and bounded versus
   disabled pool retention.
+- `PipelineFusionBenchmarks` compares independent Map calls with the fused
+  pipeline and reports both execution time and managed allocation.
 - The package script builds, tests, packs, verifies strong-name identity, and
   runs a package-only consumer.
 - CI runs the no-hardware-GPU package path on Windows and Linux.

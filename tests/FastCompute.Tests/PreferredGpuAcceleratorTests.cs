@@ -2,9 +2,64 @@ namespace FastCompute.Tests;
 
 [TestFixture]
 [Category("GPU")]
+[NonParallelizable]
 public sealed class PreferredGpuAcceleratorTests
 {
     private const int NvidiaAcceleratorIndex = 2;
+
+    [TearDown]
+    public void ResetDefaults()
+    {
+        ComputeDefaults.PreferredGpuAcceleratorIndex = null;
+    }
+
+    [Test]
+    public void Auto_UsesDefaultPreferredGpuWhenGpuIsBeneficial()
+    {
+        ComputeDeviceInfo device = GetNvidiaDevice();
+        ComputeDefaults.PreferredGpuAcceleratorIndex = device.Index;
+
+        var result = Compute.RunWithDiagnostics(
+            CreateSource(4_096),
+            value =>
+                GpuMath.Sin(value) *
+                GpuMath.Exp(-value * value),
+            new ComputeOptions
+            {
+                Thresholds = new ComputeThresholdOptions
+                {
+                    GpuHeavyThreshold = 0
+                }
+            });
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                result.Diagnostics.Backend,
+                Is.EqualTo(ComputeBackendKind.Gpu));
+            Assert.That(
+                result.Diagnostics.DeviceName,
+                Is.EqualTo(device.Name));
+        });
+    }
+
+    [Test]
+    public void OperationPreference_OverridesDefaultPreference()
+    {
+        ComputeDeviceInfo device = GetNvidiaDevice();
+        ComputeDefaults.PreferredGpuAcceleratorIndex = int.MaxValue;
+
+        var result = Compute.RunWithDiagnostics(
+            CreateSource(128),
+            value => value * 2.0f,
+            new ComputeOptions
+            {
+                Backend = ComputeBackendKind.Gpu,
+                PreferredGpuAcceleratorIndex = device.Index
+            });
+
+        Assert.That(result.Diagnostics.DeviceName, Is.EqualTo(device.Name));
+    }
 
     [Test]
     public void Auto_UsesPreferredGpuWhenGpuIsBeneficial()

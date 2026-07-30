@@ -42,6 +42,19 @@ Ensure(
     histogram.SequenceEqual([2, 2]),
     "Histogram Clamp behavior failed.");
 
+float[] pipelineResult = source
+    .AsCompute(
+        new ComputeOptions
+        {
+            Backend = ComputeBackendKind.Simd
+        })
+    .Select(value => value * 2.0f)
+    .SelectInPlace(value => value + 1.0f)
+    .ToArray();
+Ensure(
+    pipelineResult.SequenceEqual([1.0f, 1.5f, 2.0f, 2.5f, 3.0f]),
+    "Lazy compute pipeline execution failed.");
+
 ComputeDeviceInfo? hardwareGpu = ComputeContext.GetAccelerators()
     .FirstOrDefault(
         device => !string.Equals(
@@ -51,23 +64,30 @@ ComputeDeviceInfo? hardwareGpu = ComputeContext.GetAccelerators()
 
 if (hardwareGpu is not null)
 {
-    var gpuResult = Compute.RunWithDiagnostics(
-        source,
-        value => GpuMath.Sin(value),
-        new ComputeOptions
-        {
-            Backend = ComputeBackendKind.Gpu,
-            PreferredGpuAcceleratorIndex = hardwareGpu.Index
-        });
-    Ensure(
-        gpuResult.Diagnostics.Backend == ComputeBackendKind.Gpu,
-        "The package did not execute on the selected GPU.");
-    Ensure(
-        gpuResult.Diagnostics.DeviceName == hardwareGpu.Name,
-        "The package selected an unexpected GPU.");
-    Console.WriteLine(
-        $"GPU package smoke test: {hardwareGpu.Name} " +
-        $"({hardwareGpu.AcceleratorType}, index {hardwareGpu.Index})");
+    try
+    {
+        ComputeDefaults.PreferredGpuAcceleratorIndex = hardwareGpu.Index;
+        var gpuResult = Compute.RunWithDiagnostics(
+            source,
+            value => GpuMath.Sin(value),
+            new ComputeOptions
+            {
+                Backend = ComputeBackendKind.Gpu
+            });
+        Ensure(
+            gpuResult.Diagnostics.Backend == ComputeBackendKind.Gpu,
+            "The package did not execute on the selected GPU.");
+        Ensure(
+            gpuResult.Diagnostics.DeviceName == hardwareGpu.Name,
+            "The package selected an unexpected default GPU.");
+        Console.WriteLine(
+            $"GPU package smoke test: {hardwareGpu.Name} " +
+            $"({hardwareGpu.AcceleratorType}, index {hardwareGpu.Index})");
+    }
+    finally
+    {
+        ComputeDefaults.PreferredGpuAcceleratorIndex = null;
+    }
 }
 else
 {

@@ -4,7 +4,7 @@ FastCompute.NET is a strongly named .NET 8 library for fast array processing.
 It provides one API for single-threaded CPU, multi-threaded CPU, SIMD, and
 ILGPU execution and supports `float`, `double`, and `int` arrays.
 
-Version `0.5.0` is the first stable release. The assembly public key token is
+Version `0.6.0` is the current stable release. The assembly public key token is
 `c76a60c96d65300c`.
 
 ## Quick start
@@ -12,62 +12,173 @@ Version `0.5.0` is the first stable release. The assembly public key token is
 ### 1. Install the package
 
 ```powershell
-dotnet add package FastCompute --version 0.5.0
+dotnet add package FastCompute --version 0.6.0
 ```
 
 The consuming project must target .NET 8 or a compatible later framework.
 
-### 2. Process an array
+### 2. Build and execute an optimized pipeline
 
 ```csharp
 using FastCompute;
 
 float[] source = [0.0f, 0.5f, 1.0f, 1.5f];
 
-float[] result = Compute.Run(
-    source,
-    value => GpuMath.Sin(value) * 2.0f);
+float[] result = source
+    .AsCompute()
+    .Select(value => value * 2.0f)
+    .SelectInPlace(value => value + 1.0f)
+    .Select(value => GpuMath.Sin(value))
+    .ToArray();
 ```
 
-`Compute.Run` uses `ComputeBackendKind.Auto` by default. FastCompute evaluates
-the operation and array size and then selects Scalar CPU, Parallel CPU, SIMD,
-or GPU. Auto mode is transfer-conservative: merely having a GPU does not mean
-that every operation is sent to it.
+Nothing is executed before `ToArray`. FastCompute fuses the three selectors
+into one expression, selects a backend once, and avoids intermediate managed
+arrays.
 
-### 3. Check which backend was selected
+`AsCompute()` uses Auto by default. FastCompute evaluates the complete
+optimized expression and array size and then selects Scalar CPU, Parallel CPU,
+SIMD, or GPU. Auto is transfer-conservative: merely having a GPU does not mean
+that every pipeline is sent to it.
 
-```csharp
-using FastCompute;
-using FastCompute.Diagnostics;
-
-ComputeResult<float[]> result = Compute.RunWithDiagnostics(
-    source,
-    value => GpuMath.Sin(value) * 2.0f);
-
-Console.WriteLine($"Backend: {result.Diagnostics.Backend}");
-Console.WriteLine($"Device:  {result.Diagnostics.DeviceName ?? "CPU"}");
-Console.WriteLine($"Reason:  {result.Diagnostics.BackendSelectionReason}");
-```
-
-The computed array is available through `result.Value`.
-
-### 4. Force a backend when required
+### 3. Supply a reusable GPU context
 
 ```csharp
-float[] simdResult = Compute.Run(
-    source,
-    value => value * 2.0f + 1.0f,
-    new ComputeOptions
+ComputeDeviceInfo gpuDevice = ComputeContext.GetAccelerators()
+    .First(device => !device.AcceleratorType.Contains(
+        "CPU",
+        StringComparison.OrdinalIgnoreCase));
+
+using ComputeContext context = ComputeContext.Create(
+    new ComputeContextOptions
     {
-        Backend = ComputeBackendKind.Simd
+        AcceleratorIndex = gpuDevice.Index
     });
+
+float[] result = source
+    .AsCompute(context)
+    .Select(value => value * 2.0f)
+    .Select(value => GpuMath.Sin(value))
+    .ToArray();
+```
+
+Passing a context makes that accelerator available to Auto and reuses its
+compiled kernels. It still does not force GPU execution.
+
+### 4. Force the selected GPU when required
+
+```csharp
+float[] gpuResult = source
+    .AsCompute(
+        new ComputeOptions
+        {
+            Backend = ComputeBackendKind.Gpu,
+            GpuContext = context
+        })
+    .Select(value => value * 2.0f)
+    .Select(value => GpuMath.Sin(value))
+    .ToArray();
 ```
 
 An explicitly selected backend is a strict request and never silently falls
 back. If the expression or machine does not support that backend, the operation
 throws an exception.
 
+### 5. Call an existing custom method
+
+Expressions intended for SIMD or GPU must use the supported expression subset.
+If the transformation needs unrestricted .NET code, use `RunDelegate` and
+select Scalar or Parallel CPU:
+
+```csharp
+float GetApplicationCoefficient(float value) =>
+    value < 0.5f ? 0.25f : 0.75f;
+
+float CustomTransform(float value) =>
+    MathF.Sin(value) + GetApplicationCoefficient(value);
+
+float[] result = Compute.RunDelegate(
+    source,
+    CustomTransform,
+    new ComputeOptions
+    {
+        Backend = ComputeBackendKind.ParallelCpu
+    });
+```
+
 ## Detailed guide
+
+### Lazy optimized pipelines
+
+`AsCompute` creates an immutable lazy pipeline for `float[]`, `double[]`, or
+`int[]`:
+
+```csharp
+ComputePipeline<float> pipeline = source
+    .AsCompute()
+    .Select(value => value * 2.0f)
+    .SelectInPlace(value => value + 1.0f)
+    .Select(value => GpuMath.Clamp(value, 0.0f, 1.0f));
+
+// Planning, optimization, backend selection, and execution happen here.
+float[] result = pipeline.ToArray();
+```
+
+At the terminal operation, the pipeline optimizer substitutes each selector
+into the next selector. Existing expression optimization then performs
+constant folding and IEEE-safe simplification. The resulting expression is
+executed as one Map operation, which means one Parallel/SIMD pass or one GPU
+Map kernel instead of one pass per `Select`.
+
+Pipelines can be configured in three ways:
+
+```csharp
+// Auto with library defaults.
+ComputePipeline<float> automatic = source.AsCompute();
+
+// Auto or explicit backend with operation settings.
+ComputePipeline<float> configured = source.AsCompute(
+    new ComputeOptions
+    {
+        Backend = ComputeBackendKind.Auto,
+        PreferredGpuAcceleratorIndex = preferredGpu.Index
+    });
+
+// Auto selection with a reusable GPU context when GPU wins.
+ComputePipeline<float> withContext = source.AsCompute(context);
+```
+
+`SelectInPlace` allows the optimizer to reuse intermediate storage but does not
+change the original managed array. This makes normal `ToArray` execution safe
+to branch:
+
+```csharp
+ComputePipeline<float> root = source.AsCompute();
+ComputePipeline<float> doubled =
+    root.SelectInPlace(value => value * 2.0f);
+ComputePipeline<float> shifted =
+    root.Select(value => value + 10.0f);
+
+float[] first = doubled.ToArray();
+float[] second = shifted.ToArray();
+```
+
+To explicitly overwrite `source`, use the mutating terminal:
+
+```csharp
+float[] sameArray = source
+    .AsCompute()
+    .Select(value => value * 2.0f)
+    .SelectInPlace(value => value + 1.0f)
+    .ToArrayInPlace();
+
+Debug.Assert(ReferenceEquals(source, sameArray));
+```
+
+Available terminals are `ToArray`, `ToArrayInPlace`, `Sum`, `Min`, `Max`, and
+`Average`. Selector fusion is currently unary. A reduction after selectors
+uses the optimized Map result and then the selected reduction backend;
+map-reduction kernel fusion is reserved for a later version.
 
 ### Core operations
 
@@ -182,6 +293,9 @@ When a transformation contains unrestricted application code, use
 CPU without translating it:
 
 ```csharp
+float GetApplicationCoefficient(float value) =>
+    value < 0.5f ? 0.25f : 0.75f;
+
 float CustomCalculation(float value) =>
     MathF.Sin(value) + GetApplicationCoefficient(value);
 
@@ -301,6 +415,49 @@ float[] gpuResult = Compute.Run(
 `GpuContext` and `PreferredGpuAcceleratorIndex` are mutually exclusive. A
 context created without an index prefers a non-CPU accelerator and falls back
 to the ILGPU CPU accelerator if no hardware GPU is available.
+
+### Setting the default preferred GPU
+
+For an application-wide preference, set the accelerator once during startup:
+
+```csharp
+ComputeDeviceInfo preferredGpu = ComputeContext.GetAccelerators()
+    .First(device => !device.AcceleratorType.Contains(
+        "CPU",
+        StringComparison.OrdinalIgnoreCase));
+
+ComputeDefaults.PreferredGpuAcceleratorIndex = preferredGpu.Index;
+```
+
+The default applies to Auto and explicit GPU operations that do not provide
+their own GPU setting:
+
+```csharp
+// Considers the default GPU, but can still select CPU or SIMD.
+float[] automatic = Compute.Run(
+    source,
+    value => GpuMath.Sin(value));
+
+// Requires GPU and uses the default preferred accelerator.
+float[] forcedGpu = Compute.Run(
+    source,
+    value => GpuMath.Sin(value),
+    new ComputeOptions
+    {
+        Backend = ComputeBackendKind.Gpu
+    });
+```
+
+The precedence order is:
+
+1. `ComputeOptions.GpuContext` for the current operation;
+2. `ComputeOptions.PreferredGpuAcceleratorIndex` for the current operation;
+3. `ComputeDefaults.PreferredGpuAcceleratorIndex`;
+4. FastCompute's automatic accelerator selection.
+
+Set `ComputeDefaults.PreferredGpuAcceleratorIndex = null` to restore automatic
+selection. The property is process-wide; configure it during application
+startup rather than changing it between concurrent operations.
 
 ### When GPU kernels are compiled
 
@@ -609,7 +766,7 @@ dotnet run --project samples/FastCompute.Sample.Console `
 ```powershell
 dotnet build FastCompute.sln --configuration Release
 dotnet test FastCompute.sln --configuration Release --no-build
-./pack.ps1 -Version 0.5.0
+./pack.ps1 -Version 0.6.0
 ```
 
 `pack.ps1` builds and tests the solution, creates `.nupkg` and `.snupkg`
@@ -617,7 +774,7 @@ artifacts, verifies the strong-name identity, and runs a package-only consumer
 smoke test. On a Windows or Linux CI machine without a hardware GPU:
 
 ```powershell
-./pack.ps1 -Version 0.5.0 -SkipGpuTests
+./pack.ps1 -Version 0.6.0 -SkipGpuTests
 ```
 
 ## Further documentation
@@ -630,6 +787,7 @@ smoke test. On a Windows or Linux CI machine without a hardware GPU:
 - [SIMD architecture](https://github.com/staszx/FastCompute.NET/blob/main/docs/simd-architecture.md)
 - [Stage 4 reductions and memory pooling](https://github.com/staszx/FastCompute.NET/blob/main/docs/stage-4-reductions-and-pooling.md)
 - [Stage 6 execution graph](https://github.com/staszx/FastCompute.NET/blob/main/docs/stage-6-execution-graph-plan.md)
+- [Lazy optimized array pipeline](https://github.com/staszx/FastCompute.NET/blob/main/docs/lazy-array-pipeline.md)
 - [Release history and known limitations](https://github.com/staszx/FastCompute.NET/blob/main/CHANGELOG.md)
 
 ## Authors

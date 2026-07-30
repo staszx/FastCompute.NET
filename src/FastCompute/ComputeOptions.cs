@@ -82,4 +82,22 @@ public sealed class ComputeOptions
     /// <see cref="PreferredGpuAcceleratorIndex"/>.
     /// </summary>
     public ComputeContext? GpuContext { get; init; }
+
+    internal ComputeOptions WithPreferredGpuAcceleratorIndex(
+        int acceleratorIndex) =>
+        new()
+        {
+            Backend = Backend,
+            AllowFallback = AllowFallback,
+            CancellationToken = CancellationToken,
+            MaxDegreeOfParallelism = MaxDegreeOfParallelism,
+            EnableDiagnostics = EnableDiagnostics,
+            OptimizationMode = OptimizationMode,
+            Thresholds = Thresholds,
+            GpuMemoryBudgetBytes = GpuMemoryBudgetBytes,
+            EnableGpuChunking = EnableGpuChunking,
+            GpuChunkElementCount = GpuChunkElementCount,
+            EnableGpuStreaming = EnableGpuStreaming,
+            PreferredGpuAcceleratorIndex = acceleratorIndex
+        };
 }

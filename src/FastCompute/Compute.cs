@@ -884,7 +884,7 @@ public static partial class Compute
                 nameof(options));
         }
 
-        return result;
+        return ComputeDefaults.Apply(result);
     }
 
     private static void ValidateThreshold(int threshold, string propertyName)

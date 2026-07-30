@@ -20,7 +20,7 @@ jobs:
 
       - name: Build, test without hardware GPU, and package
         shell: pwsh
-        run: ./pack.ps1 -Version 0.5.0 -SkipGpuTests
+        run: ./pack.ps1 -Version 0.6.0 -SkipGpuTests
 
       - uses: actions/upload-artifact@v4
         with:

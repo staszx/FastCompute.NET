@@ -18,6 +18,14 @@ Console.WriteLine($"Auto backend: {automatic.Diagnostics.Backend}");
 Console.WriteLine($"Auto device:  {automatic.Diagnostics.DeviceName ?? "CPU"}");
 Console.WriteLine($"First result: {automatic.Value[0]}");
 
+float[] pipelineResult = source
+    .AsCompute()
+    .Select(value => value * multiplier)
+    .SelectInPlace(value => GpuMath.Sin(value))
+    .Select(value => GpuMath.Clamp(value, 0.0f, 1.0f))
+    .ToArray();
+Console.WriteLine($"Lazy pipeline result count: {pipelineResult.Length}");
+
 using ComputeContext context = ComputeContext.Create();
 Console.WriteLine($"Resident-buffer accelerator: {context.DeviceName}");
 
