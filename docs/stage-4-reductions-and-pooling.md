@@ -89,9 +89,15 @@ Pool behavior can be inspected:
 ComputeMemoryPoolStatistics statistics = context.MemoryPoolStatistics;
 ```
 
-The snapshot reports allocations, rentals, successful reuses, and currently
-available buffers. Disposing the context disposes every buffer allocated by its
-pool before disposing the accelerator.
+Idle retention is bounded by
+`ComputeContextOptions.MemoryPoolLimitBytes` (256 MiB by default). When the
+limit is exceeded, the least recently returned buffers are disposed. Setting
+the limit to zero disables idle retention.
+
+The snapshot reports allocations, rentals, successful reuses, currently
+available buffers, retained bytes, the configured limit, and eviction count.
+Disposing the context disposes every buffer allocated by its pool before
+disposing the accelerator.
 
 ## Automatic GPU selection
 

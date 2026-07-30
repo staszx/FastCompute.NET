@@ -122,15 +122,17 @@ internal sealed class GpuComputeBackend : IComputeBackend
         int binCount,
         float minimum,
         float maximum,
+        HistogramOutOfRangeMode outOfRangeMode,
         ComputeExecutionContext context)
         => ResolveContext(context).ExecuteHistogram(
             source,
             binCount,
             minimum,
             maximum,
+            outOfRangeMode,
             context);
 
-    private static ComputeContext ResolveContext(
+    internal static ComputeContext ResolveContext(
         ComputeExecutionContext context) =>
         ResolveContext(
             context.GpuContext,

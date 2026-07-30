@@ -2,6 +2,8 @@ using System.Globalization;
 using System.Text;
 using FastCompute.Expressions;
 
+using System.ComponentModel;
+
 namespace FastCompute.Gpu;
 
 internal static class GpuOpCode
@@ -31,7 +33,26 @@ internal static class GpuOpCode
     internal const int Round = 22;
 }
 
-internal readonly record struct GpuInstruction(int OpCode, float Operand);
+/// <summary>
+/// Represents one instruction consumed by the public ILGPU kernel entry points.
+/// This type is infrastructure, not a user-facing API.
+/// </summary>
+[EditorBrowsable(EditorBrowsableState.Never)]
+public readonly record struct GpuInstruction
+{
+    /// <summary>Creates an instruction for the internal GPU interpreter.</summary>
+    public GpuInstruction(int opCode, float operand)
+    {
+        OpCode = opCode;
+        Operand = operand;
+    }
+
+    /// <summary>Gets the internal operation code.</summary>
+    public int OpCode { get; }
+
+    /// <summary>Gets the optional numeric operand.</summary>
+    public float Operand { get; }
+}
 
 internal sealed record GpuProgram(
     GpuInstruction[] Instructions,

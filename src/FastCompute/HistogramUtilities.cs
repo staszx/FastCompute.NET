@@ -10,13 +10,24 @@ internal static class HistogramUtilities
         int binCount,
         float minimum,
         float maximum,
-        float scale)
+        float scale,
+        HistogramOutOfRangeMode outOfRangeMode)
     {
-        if (float.IsNaN(value) ||
-            value < minimum ||
-            value > maximum)
+        if (float.IsNaN(value))
         {
             return -1;
+        }
+
+        if (value < minimum)
+        {
+            return outOfRangeMode == HistogramOutOfRangeMode.Clamp ? 0 : -1;
+        }
+
+        if (value > maximum)
+        {
+            return outOfRangeMode == HistogramOutOfRangeMode.Clamp
+                ? binCount - 1
+                : -1;
         }
 
         if (value == maximum)

@@ -1,4 +1,4 @@
 using System.Runtime.CompilerServices;
 
-[assembly: InternalsVisibleTo("FastCompute.Tests")]
-[assembly: InternalsVisibleTo("ILGPURuntime")]
+[assembly: InternalsVisibleTo(
+    "FastCompute.Tests, PublicKey=002400000480000094000000060200000024000052534131000400000100010031c444ee59969a8c383cf580df556b27e5a674ada0e34b6e16cae8ce0c95b6a1343441347cbbf18c6dbbdd0663e57d53792a13fa8844ff9798d3d10ff5dfd822e9389337d1f52aa563dd2b5b3c6e660add4ff22ef037bcd9c19670df0d07f0aa2ad7a0860a7f5ac231342cd7a55e8df654930465a4f235929071698139680fda")]

@@ -239,6 +239,28 @@ public sealed class GpuHistogramTests
         });
     }
 
+    [Test]
+    public void Histogram_GpuSupportsIgnoreOutOfRangeMode()
+    {
+        using ComputeContext context = CreateCudaContext();
+        int[] result = Compute.Histogram(
+            [-1.0f, 0.25f, 0.75f, 2.0f],
+            2,
+            0.0f,
+            1.0f,
+            new HistogramOptions
+            {
+                OutOfRangeMode = HistogramOutOfRangeMode.Ignore
+            },
+            new ComputeOptions
+            {
+                Backend = ComputeBackendKind.Gpu,
+                GpuContext = context
+            });
+
+        Assert.That(result, Is.EqualTo(new[] { 1, 1 }));
+    }
+
     private static ComputeContext CreateCudaContext()
     {
         ComputeDeviceInfo device = ComputeContext.GetAccelerators()

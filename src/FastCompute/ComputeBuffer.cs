@@ -45,6 +45,19 @@ public sealed class ComputeBuffer<T> : IDisposable
         }
     }
 
+    /// <summary>Gets the context that owns the resident buffer.</summary>
+    public ComputeContext Context => context;
+
+    /// <summary>Gets whether the buffer resides in host or device memory.</summary>
+    public ComputeMemoryLocation Location
+    {
+        get
+        {
+            context.ThrowIfDisposed();
+            return context.MemoryLocation;
+        }
+    }
+
     /// <summary>Downloads the buffer to a new managed array.</summary>
     public T[] Download()
     {
@@ -63,6 +76,22 @@ public sealed class ComputeBuffer<T> : IDisposable
         {
             current.Release();
         }
+    }
+
+    /// <summary>
+    /// Downloads the buffer through a task-compatible API.
+    /// </summary>
+    /// <remarks>
+    /// ILGPU download completion is synchronous in the current implementation;
+    /// no thread-pool work is scheduled.
+    /// </remarks>
+    public Task<T[]> DownloadAsync(
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        T[] result = Download();
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(result);
     }
 
     /// <summary>Downloads the buffer into an existing destination span.</summary>
@@ -155,8 +184,6 @@ public sealed class ComputeBuffer<T> : IDisposable
 
         owned?.Release();
     }
-
-    internal ComputeContext Context => context;
 
     internal ComputeBufferNode<T> AcquireNode()
     {

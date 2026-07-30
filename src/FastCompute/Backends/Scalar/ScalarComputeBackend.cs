@@ -137,6 +137,7 @@ internal sealed class ScalarComputeBackend : IComputeBackend
         int binCount,
         float minimum,
         float maximum,
+        HistogramOutOfRangeMode outOfRangeMode,
         ComputeExecutionContext context)
     {
         var histogram = new int[binCount];
@@ -151,7 +152,8 @@ internal sealed class ScalarComputeBackend : IComputeBackend
                 binCount,
                 minimum,
                 maximum,
-                scale);
+                scale,
+                outOfRangeMode);
             if (binIndex >= 0)
             {
                 histogram[binIndex]++;

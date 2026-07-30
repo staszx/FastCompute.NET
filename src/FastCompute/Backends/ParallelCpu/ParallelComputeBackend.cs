@@ -169,6 +169,7 @@ internal sealed class ParallelComputeBackend : IComputeBackend
         int binCount,
         float minimum,
         float maximum,
+        HistogramOutOfRangeMode outOfRangeMode,
         ComputeExecutionContext context)
     {
         var histogram = new int[binCount];
@@ -189,7 +190,8 @@ internal sealed class ParallelComputeBackend : IComputeBackend
                     binCount,
                     minimum,
                     maximum,
-                    scale);
+                    scale,
+                    outOfRangeMode);
                 if (binIndex >= 0)
                 {
                     localHistogram[binIndex]++;

@@ -2,6 +2,8 @@ using System.Runtime.Intrinsics.X86;
 
 namespace FastCompute.Tests;
 
+using ILGPU.Algorithms.MatrixOperations;
+
 [TestFixture]
 public sealed class ReductionTests
 {
@@ -63,5 +65,29 @@ public sealed class ReductionTests
             Assert.That(float.IsNaN(Compute.Min(source, options)), Is.True);
             Assert.That(float.IsNaN(Compute.Max(source, options)), Is.True);
         });
+    }
+
+
+    private static float mmm(float x)
+    {
+        return x + 10;
+    }
+
+    [Test]
+    [Explicit("Manual 4 GiB allocation experiment.")]
+    public void Test()
+    {
+        var source = new float[1024 * 1024 * 1024];
+
+        var s =  Compute.Run(source, w => w+2, new ComputeOptions() { Backend = ComputeBackendKind.ParallelCpu });
+       //var diagnostics = s.Diagnostics;
+       //Console.WriteLine($"Backend: {diagnostics.Backend}");
+       //Console.WriteLine($"Device: {diagnostics.DeviceName}");
+       //Console.WriteLine($"Planning: {diagnostics.PlanningTime}");
+       //Console.WriteLine($"Compilation: {diagnostics.CompilationTime}");
+       //Console.WriteLine($"Upload: {diagnostics.UploadTime}");
+       //Console.WriteLine($"Execution: {diagnostics.ExecutionTime}");
+       //Console.WriteLine($"Download: {diagnostics.DownloadTime}");
+       //Console.WriteLine($"Cache hit: {diagnostics.KernelCacheHit}");
     }
 }

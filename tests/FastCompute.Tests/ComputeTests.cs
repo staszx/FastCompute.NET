@@ -3,6 +3,25 @@ namespace FastCompute.Tests;
 public sealed class ComputeTests
 {
     [Test]
+    public async Task RunAsync_ReturnsTheSameResultWithoutThreadPoolWrapping()
+    {
+        Task<float[]> operation = Compute.RunAsync(
+            [1.0f, 2.0f, 3.0f],
+            value => value * 2.0f,
+            new ComputeOptions { Backend = ComputeBackendKind.Scalar });
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(operation.IsCompleted, Is.True);
+            Assert.That(
+                operation.GetAwaiter().GetResult(),
+                Is.EqualTo(new[] { 2.0f, 4.0f, 6.0f }));
+        });
+
+        _ = await operation;
+    }
+
+    [Test]
     public void Run_AppliesArithmeticExpressionWithoutChangingSource()
     {
         float[] source = [1.0f, 2.0f, 3.0f];

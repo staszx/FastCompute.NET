@@ -13,7 +13,7 @@ namespace FastCompute;
 /// <summary>
 /// Provides one-shot array computation operations.
 /// </summary>
-public static class Compute
+public static partial class Compute
 {
     /// <summary>
     /// Applies an expression to every element of an array.
@@ -27,6 +27,21 @@ public static class Compute
         Expression<Func<float, float>> expression,
         ComputeOptions? options = null) =>
         RunCore(source, expression, options, collectDiagnostics: false, out _);
+
+    /// <summary>
+    /// Applies an expression and exposes the result through a task-compatible
+    /// API. Cancellation is supplied through <see cref="ComputeOptions"/>.
+    /// </summary>
+    /// <remarks>
+    /// Current backends expose synchronous completion primitives, so this
+    /// method completes synchronously without scheduling unnecessary
+    /// thread-pool work.
+    /// </remarks>
+    public static Task<float[]> RunAsync(
+        float[] source,
+        Expression<Func<float, float>> expression,
+        ComputeOptions? options = null) =>
+        Task.FromResult(Run(source, expression, options));
 
     /// <summary>
     /// Applies an expression and returns the result together with execution diagnostics.
@@ -277,8 +292,10 @@ public static class Compute
     /// [<paramref name="minimum"/>, <paramref name="maximum"/>].
     /// </summary>
     /// <remarks>
-    /// Values outside the range and NaN values are ignored. The maximum value
-    /// belongs to the last bin.
+    /// Finite values outside the range are clamped to edge bins and NaN values
+    /// are ignored. The maximum value belongs to the last bin. Use the
+    /// overload accepting <see cref="HistogramOptions"/> to select another
+    /// out-of-range behavior.
     /// </remarks>
     public static int[] Histogram(
         float[] source,
@@ -291,9 +308,33 @@ public static class Compute
             binCount,
             minimum,
             maximum,
+            new HistogramOptions(),
             options,
             collectDiagnostics: false,
             out _);
+
+    /// <summary>
+    /// Counts values in equally sized bins with explicit out-of-range behavior.
+    /// </summary>
+    public static int[] Histogram(
+        float[] source,
+        int binCount,
+        float minimum,
+        float maximum,
+        HistogramOptions histogramOptions,
+        ComputeOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(histogramOptions);
+        return HistogramCore(
+            source,
+            binCount,
+            minimum,
+            maximum,
+            histogramOptions,
+            options,
+            collectDiagnostics: false,
+            out _);
+    }
 
     /// <summary>Builds a histogram and returns execution diagnostics.</summary>
     public static ComputeResult<int[]> HistogramWithDiagnostics(
@@ -308,6 +349,32 @@ public static class Compute
             binCount,
             minimum,
             maximum,
+            new HistogramOptions(),
+            options,
+            collectDiagnostics: true,
+            out ComputeDiagnostics? diagnostics);
+        return new ComputeResult<int[]>(value, diagnostics!);
+    }
+
+    /// <summary>
+    /// Builds a histogram with explicit out-of-range behavior and returns
+    /// execution diagnostics.
+    /// </summary>
+    public static ComputeResult<int[]> HistogramWithDiagnostics(
+        float[] source,
+        int binCount,
+        float minimum,
+        float maximum,
+        HistogramOptions histogramOptions,
+        ComputeOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(histogramOptions);
+        int[] value = HistogramCore(
+            source,
+            binCount,
+            minimum,
+            maximum,
+            histogramOptions,
             options,
             collectDiagnostics: true,
             out ComputeDiagnostics? diagnostics);
@@ -319,12 +386,14 @@ public static class Compute
         int binCount,
         float minimum,
         float maximum,
+        HistogramOptions histogramOptions,
         ComputeOptions? options,
         bool collectDiagnostics,
         out ComputeDiagnostics? diagnostics)
     {
         ArgumentNullException.ThrowIfNull(source);
         ValidateHistogramArguments(binCount, minimum, maximum);
+        ValidateHistogramOptions(histogramOptions);
 
         long planningStarted =
             collectDiagnostics ? Stopwatch.GetTimestamp() : 0L;
@@ -349,6 +418,7 @@ public static class Compute
                         binCount,
                         minimum,
                         maximum,
+                        histogramOptions.OutOfRangeMode,
                         context),
                 ComputeBackendKind.ParallelCpu =>
                     ParallelComputeBackend.Instance.ExecuteHistogram(
@@ -356,6 +426,7 @@ public static class Compute
                         binCount,
                         minimum,
                         maximum,
+                        histogramOptions.OutOfRangeMode,
                         context),
                 ComputeBackendKind.Gpu =>
                     GpuComputeBackend.Instance.ExecuteHistogram(
@@ -363,6 +434,7 @@ public static class Compute
                         binCount,
                         minimum,
                         maximum,
+                        histogramOptions.OutOfRangeMode,
                         context),
                 _ => throw new InvalidOperationException(
                     "Histogram backend resolution returned an unsupported backend.")
@@ -883,6 +955,18 @@ public static class Compute
                 nameof(maximum),
                 maximum,
                 "Histogram maximum must be finite and greater than minimum.");
+        }
+    }
+
+    private static void ValidateHistogramOptions(
+        HistogramOptions histogramOptions)
+    {
+        if (!Enum.IsDefined(histogramOptions.OutOfRangeMode))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(histogramOptions),
+                histogramOptions.OutOfRangeMode,
+                "Histogram out-of-range mode is not defined.");
         }
     }
 

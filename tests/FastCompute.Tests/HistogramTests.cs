@@ -28,9 +28,33 @@ public sealed class HistogramTests
         };
 
         int[] result =
-            Compute.Histogram(source, 4, 0.0f, 1.0f, options);
+            Compute.Histogram(
+                source,
+                4,
+                0.0f,
+                1.0f,
+                new HistogramOptions
+                {
+                    OutOfRangeMode = HistogramOutOfRangeMode.Ignore
+                },
+                options);
 
         Assert.That(result, Is.EqualTo(new[] { 3, 1, 1, 3 }));
+    }
+
+    [TestCase(ComputeBackendKind.Scalar)]
+    [TestCase(ComputeBackendKind.ParallelCpu)]
+    public void Histogram_ClampsOutOfRangeValuesByDefault(
+        ComputeBackendKind backend)
+    {
+        int[] result = Compute.Histogram(
+            [-2.0f, -0.1f, 0.25f, 0.75f, 1.1f, 2.0f, float.NaN],
+            2,
+            0.0f,
+            1.0f,
+            new ComputeOptions { Backend = backend });
+
+        Assert.That(result, Is.EqualTo(new[] { 3, 3 }));
     }
 
     [Test]

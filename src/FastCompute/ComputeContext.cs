@@ -14,7 +14,7 @@ namespace FastCompute;
 /// <summary>
 /// Owns an ILGPU accelerator, compiled kernels, and lowered expression plans.
 /// </summary>
-public sealed class ComputeContext : IDisposable
+public sealed partial class ComputeContext : IDisposable
 {
     private const long AutoMemoryBudgetNumerator = 3;
     private const long AutoMemoryBudgetDenominator = 4;
@@ -30,6 +30,8 @@ public sealed class ComputeContext : IDisposable
 
     private ComputeContext(ComputeContextOptions options)
     {
+        ArgumentOutOfRangeException.ThrowIfNegative(
+            options.MemoryPoolLimitBytes);
         ilGpuContext = IlGpuContext.Create(
             builder => builder.AllAccelerators().EnableAlgorithms());
 
@@ -37,7 +39,9 @@ public sealed class ComputeContext : IDisposable
         {
             Device device = SelectDevice(ilGpuContext, options.AcceleratorIndex);
             accelerator = device.CreateAccelerator(ilGpuContext);
-            memoryPool = new GpuFloatMemoryPool(accelerator);
+            memoryPool = new GpuFloatMemoryPool(
+                accelerator,
+                options.MemoryPoolLimitBytes);
         }
         catch
         {
@@ -63,6 +67,17 @@ public sealed class ComputeContext : IDisposable
         {
             ThrowIfDisposed();
             return accelerator.MemorySize;
+        }
+    }
+
+    internal ComputeMemoryLocation MemoryLocation
+    {
+        get
+        {
+            ThrowIfDisposed();
+            return accelerator.AcceleratorType == AcceleratorType.CPU
+                ? ComputeMemoryLocation.Host
+                : ComputeMemoryLocation.Device;
         }
     }
 
@@ -115,6 +130,29 @@ public sealed class ComputeContext : IDisposable
         return new ComputeBuffer<T>(
             this,
             new BufferSourceNode<T>(this, buffer));
+    }
+
+    /// <summary>
+    /// Uploads an array through a task-compatible API.
+    /// </summary>
+    /// <remarks>
+    /// ILGPU upload completion is synchronous in the current implementation;
+    /// no thread-pool work is scheduled.
+    /// </remarks>
+    public Task<ComputeBuffer<T>> UploadAsync<T>(
+        T[] source,
+        CancellationToken cancellationToken = default)
+        where T : unmanaged
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        ComputeBuffer<T> result = Upload(source);
+        if (cancellationToken.IsCancellationRequested)
+        {
+            result.Dispose();
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+
+        return Task.FromResult(result);
     }
 
     /// <summary>
@@ -182,18 +220,32 @@ public sealed class ComputeContext : IDisposable
     public IReadOnlyList<ComputeCompilationResult> PrecompileAll()
     {
         ThrowIfDisposed();
-        ComputeKernelKind[] kinds = Enum.GetValues<ComputeKernelKind>();
-        var results = new ComputeCompilationResult[kinds.Length];
+        ComputeKernelKind[] floatKinds = Enum.GetValues<ComputeKernelKind>();
+        var results = new List<ComputeCompilationResult>(
+            floatKinds.Length + 6);
 
-        for (int index = 0; index < kinds.Length; index++)
+        foreach (ComputeKernelKind kind in floatKinds)
         {
-            _ = GetOrCompileKernel(kinds[index], out KernelCompilation compilation);
-            results[index] = new ComputeCompilationResult(
+            _ = GetOrCompileKernel(kind, out KernelCompilation compilation);
+            results.Add(new ComputeCompilationResult(
                 compilation.CacheHit,
                 TimeSpan.Zero,
                 compilation.CompilationTime,
                 ComputeBackendKind.Gpu,
-                accelerator.Name);
+                accelerator.Name));
+        }
+
+        foreach (Type type in new[] { typeof(double), typeof(int) })
+        {
+            foreach (ComputeKernelKind kind in new[]
+                     {
+                         ComputeKernelKind.Map,
+                         ComputeKernelKind.Zip,
+                         ComputeKernelKind.Reduction
+                     })
+            {
+                results.Add(PrecompileNumericTemplate(type, kind));
+            }
         }
 
         return results;
@@ -208,6 +260,17 @@ public sealed class ComputeContext : IDisposable
         ArgumentNullException.ThrowIfNull(expression);
         ThrowIfDisposed();
         ValidateElementType(typeof(T));
+        if (typeof(T) == typeof(double))
+        {
+            return (PreparedCompute<T>)(object)PrepareNumeric(
+                (Expression<Func<double, double>>)(object)expression);
+        }
+
+        if (typeof(T) == typeof(int))
+        {
+            return (PreparedCompute<T>)(object)PrepareNumeric(
+                (Expression<Func<int, int>>)(object)expression);
+        }
 
         GpuProgram program = GetOrCreateProgram(expression, out _);
         CompiledKernel kernel = GetOrCompileKernel(ComputeKernelKind.Map, out _);
@@ -631,6 +694,7 @@ public sealed class ComputeContext : IDisposable
         int binCount,
         float minimum,
         float maximum,
+        HistogramOutOfRangeMode outOfRangeMode,
         ComputeExecutionContext executionContext)
     {
         ThrowIfDisposed();
@@ -702,7 +766,8 @@ public sealed class ComputeContext : IDisposable
                 binCount,
                 minimum,
                 maximum,
-                scale);
+                scale,
+                (int)outOfRangeMode);
             accelerator.Synchronize();
             executionTime +=
                 StopTiming(
@@ -1663,6 +1728,19 @@ public sealed class ComputeContext : IDisposable
         ThrowIfDisposed();
         ValidateOwnedBuffer(source);
         ValidateElementType(typeof(T));
+        if (typeof(T) == typeof(double))
+        {
+            return (ComputeBuffer<T>)(object)SelectNumericBuffer(
+                (ComputeBuffer<double>)(object)source,
+                (Expression<Func<double, double>>)(object)expression);
+        }
+
+        if (typeof(T) == typeof(int))
+        {
+            return (ComputeBuffer<T>)(object)SelectNumericBuffer(
+                (ComputeBuffer<int>)(object)source,
+                (Expression<Func<int, int>>)(object)expression);
+        }
 
         ComputeBufferNode<T> sourceNode = source.AcquireNode();
         try
@@ -1689,6 +1767,22 @@ public sealed class ComputeContext : IDisposable
         ThrowIfDisposed();
         ValidateOwnedBuffer(source);
         ValidateElementType(typeof(T));
+        if (typeof(T) == typeof(double))
+        {
+            SelectNumericBufferInPlace(
+                (ComputeBuffer<double>)(object)source,
+                (Expression<Func<double, double>>)(object)expression);
+            return;
+        }
+
+        if (typeof(T) == typeof(int))
+        {
+            SelectNumericBufferInPlace(
+                (ComputeBuffer<int>)(object)source,
+                (Expression<Func<int, int>>)(object)expression);
+            return;
+        }
+
         ComputeExpressionPlan plan =
             StrictComputeOptimizer.Optimize(
                 ComputeExpressionParser.Parse(expression));
@@ -1711,6 +1805,21 @@ public sealed class ComputeContext : IDisposable
         ValidateOwnedBuffer(left);
         ValidateOwnedBuffer(right);
         ValidateElementType(typeof(T));
+        if (typeof(T) == typeof(double))
+        {
+            return (ComputeBuffer<T>)(object)ZipNumericBuffers(
+                (ComputeBuffer<double>)(object)left,
+                (ComputeBuffer<double>)(object)right,
+                (Expression<Func<double, double, double>>)(object)expression);
+        }
+
+        if (typeof(T) == typeof(int))
+        {
+            return (ComputeBuffer<T>)(object)ZipNumericBuffers(
+                (ComputeBuffer<int>)(object)left,
+                (ComputeBuffer<int>)(object)right,
+                (Expression<Func<int, int, int>>)(object)expression);
+        }
 
         ComputeBufferNode<T> leftNode = left.AcquireNode();
         ComputeBufferNode<T>? rightNode = null;
@@ -1755,6 +1864,24 @@ public sealed class ComputeContext : IDisposable
         ValidateOwnedBuffer(left);
         ValidateOwnedBuffer(right);
         ValidateElementType(typeof(T));
+        if (typeof(T) == typeof(double))
+        {
+            ZipNumericBuffersInPlace(
+                (ComputeBuffer<double>)(object)left,
+                (ComputeBuffer<double>)(object)right,
+                (Expression<Func<double, double, double>>)(object)expression);
+            return;
+        }
+
+        if (typeof(T) == typeof(int))
+        {
+            ZipNumericBuffersInPlace(
+                (ComputeBuffer<int>)(object)left,
+                (ComputeBuffer<int>)(object)right,
+                (Expression<Func<int, int, int>>)(object)expression);
+            return;
+        }
+
         ComputeExpressionPlan plan =
             StrictComputeOptimizer.Optimize(
                 ComputeExpressionParser.Parse(expression));
@@ -1926,6 +2053,19 @@ public sealed class ComputeContext : IDisposable
         ThrowIfDisposed();
         ValidateOwnedBuffer(source);
         ValidateElementType(typeof(T));
+        if (typeof(T) == typeof(double))
+        {
+            return (T)(object)ReduceNumericBuffer(
+                (ComputeBuffer<double>)(object)source,
+                reduction);
+        }
+
+        if (typeof(T) == typeof(int))
+        {
+            return (T)(object)ReduceNumericBuffer(
+                (ComputeBuffer<int>)(object)source,
+                reduction);
+        }
 
         ComputeBufferNode<T> sourceNode = source.AcquireNode();
         try
@@ -1985,6 +2125,13 @@ public sealed class ComputeContext : IDisposable
         ArgumentNullException.ThrowIfNull(expression);
         ThrowIfDisposed();
         ValidateElementType(elementType);
+        if (elementType != typeof(float))
+        {
+            return PrecompileNumericExpression(
+                expression,
+                kind,
+                elementType);
+        }
 
         long planningStarted = Stopwatch.GetTimestamp();
         _ = GetOrCreateProgram(expression, out bool programCacheHit);
@@ -2015,6 +2162,12 @@ public sealed class ComputeContext : IDisposable
             ComputeReductionKind.Average => reduction,
             _ => throw new ArgumentOutOfRangeException(nameof(reduction))
         };
+        if (elementType != typeof(float))
+        {
+            return PrecompileNumericTemplate(
+                elementType,
+                ComputeKernelKind.Reduction);
+        }
 
         _ = GetOrCompileKernel(
             ComputeKernelKind.Reduction,
@@ -2031,7 +2184,11 @@ public sealed class ComputeContext : IDisposable
         Type elementType)
     {
         ThrowIfDisposed();
-        ValidateElementType(elementType);
+        if (elementType != typeof(float))
+        {
+            throw new NotSupportedException(
+                "Histogram kernels support float elements only.");
+        }
         _ = GetOrCompileKernel(
             ComputeKernelKind.Histogram,
             out KernelCompilation compilation);
@@ -2124,7 +2281,8 @@ public sealed class ComputeContext : IDisposable
                     int,
                     float,
                     float,
-                    float>(GpuKernels.Histogram)
+                    float,
+                    int>(GpuKernels.Histogram)
             },
             _ => throw new ArgumentOutOfRangeException(nameof(kind))
         };
@@ -2154,10 +2312,13 @@ public sealed class ComputeContext : IDisposable
 
     private static void ValidateElementType(Type elementType)
     {
-        if (elementType != typeof(float))
+        if (elementType != typeof(float) &&
+            elementType != typeof(double) &&
+            elementType != typeof(int))
         {
             throw new NotSupportedException(
-                $"GPU execution currently supports float, not '{elementType.Name}'.");
+                $"GPU execution supports float, double, and int, not " +
+                $"'{elementType.Name}'.");
         }
     }
 
@@ -2212,7 +2373,8 @@ public sealed class ComputeContext : IDisposable
             int,
             float,
             float,
-            float>? Histogram
+            float,
+            int>? Histogram
         { get; init; }
 
         internal TimeSpan CompilationTime { get; set; }
