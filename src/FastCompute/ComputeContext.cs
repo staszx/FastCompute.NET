@@ -250,6 +250,8 @@ public sealed partial class ComputeContext : IDisposable
             }
         }
 
+        results.AddRange(PrecompileImageKernels());
+
         return results;
     }
 

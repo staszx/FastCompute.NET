@@ -162,6 +162,11 @@ internal sealed class GpuComputeBackend : IComputeBackend
             context.GpuContext,
             context.PreferredGpuAcceleratorIndex);
 
+    internal static ComputeContext ResolveContext(ComputeOptions options) =>
+        ResolveContext(
+            options.GpuContext,
+            options.PreferredGpuAcceleratorIndex);
+
     private static ComputeContext ResolveContext(
         ComputeContext? context,
         int? preferredAcceleratorIndex)

@@ -14,6 +14,30 @@ public static class GpuKernels
 {
     internal const int ReductionElementsPerOutput = 256;
 
+    /// <summary>Executes an internal composite-value Map or projection.</summary>
+    public static void CompositeMap(
+        Index1D index,
+        ArrayView<float> source,
+        ArrayView<float> destination,
+        ArrayView<GpuInstruction> program,
+        ArrayView<int> outputOffsets,
+        ArrayView<int> outputInstructionCounts,
+        int sourceComponentCount,
+        int outputComponentCount)
+    {
+        int sourceOffset = index * sourceComponentCount;
+        int destinationOffset = index * outputComponentCount;
+        for (int output = 0; output < outputComponentCount; output++)
+        {
+            destination[destinationOffset + output] = EvaluateComposite(
+                source,
+                sourceOffset,
+                program,
+                outputOffsets[output],
+                outputInstructionCounts[output]);
+        }
+    }
+
     /// <summary>Executes the internal unary Map kernel.</summary>
     public static void Map(
         Index1D index,
@@ -849,6 +873,62 @@ public static class GpuKernels
                 float right = stack[--stackPointer];
                 float left = stack[stackPointer - 1];
                 stack[stackPointer - 1] = ApplyBinary(operation, left, right);
+            }
+        }
+
+        return stack[0];
+    }
+
+    private static float EvaluateComposite(
+        ArrayView<float> source,
+        int sourceOffset,
+        ArrayView<GpuInstruction> program,
+        int programOffset,
+        int instructionCount)
+    {
+        ArrayView<float> stack =
+            LocalMemory.Allocate<float>(GpuProgramCompiler.MaximumStackDepth);
+        int stackPointer = 0;
+        int end = programOffset + instructionCount;
+        for (int instructionIndex = programOffset;
+             instructionIndex < end;
+             instructionIndex++)
+        {
+            GpuInstruction instruction = program[instructionIndex];
+            int operation = instruction.OpCode;
+            if (operation == GpuOpCode.Component)
+            {
+                stack[stackPointer++] =
+                    source[sourceOffset + (int)instruction.Operand];
+            }
+            else if (operation == GpuOpCode.Constant)
+            {
+                stack[stackPointer++] = instruction.Operand;
+            }
+            else if (operation == GpuOpCode.Negate)
+            {
+                stack[stackPointer - 1] = -stack[stackPointer - 1];
+            }
+            else
+            {
+                float right = stack[--stackPointer];
+                float left = stack[stackPointer - 1];
+                if (operation == GpuOpCode.Add)
+                {
+                    stack[stackPointer - 1] = left + right;
+                }
+                else if (operation == GpuOpCode.Subtract)
+                {
+                    stack[stackPointer - 1] = left - right;
+                }
+                else if (operation == GpuOpCode.Multiply)
+                {
+                    stack[stackPointer - 1] = left * right;
+                }
+                else
+                {
+                    stack[stackPointer - 1] = left / right;
+                }
             }
         }
 

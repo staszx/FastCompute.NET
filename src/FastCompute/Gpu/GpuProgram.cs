@@ -31,6 +31,7 @@ internal static class GpuOpCode
     internal const int Floor = 20;
     internal const int Ceiling = 21;
     internal const int Round = 22;
+    internal const int Component = 23;
 }
 
 /// <summary>

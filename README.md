@@ -319,6 +319,104 @@ backend-independent instruction representation. Captured `float`, `double`,
 objects and arbitrary .NET methods are intentionally rejected because they
 cannot be translated to SIMD or GPU instructions.
 
+### Composite values and image formats
+
+Unmanaged structures can opt into FastCompute by implementing
+`IComputeValue<T>`. Descriptors validate a tightly packed homogeneous layout of
+`float` or `byte` components. Float-component transformations, including
+transformations between different structures, run on Scalar, Parallel CPU,
+SIMD, and GPU:
+
+```csharp
+GrayF32[] luminance = pixels
+    .AsCompute()
+    .Select(Rgb.GrayscaleF32)
+    .ToArray();
+```
+
+Mixed component types use the same `Select<TDestination>` API:
+
+```csharp
+Gray8[] compact = rgb24
+    .AsCompute()
+    .Select(pixel => new Gray8(
+        (byte)((pixel.Red + pixel.Green + pixel.Blue) / 3)))
+    .ToArray();
+```
+
+Homogeneous byte-component maps, projections, and conversions execute on
+Scalar, Parallel CPU, SIMD, and GPU while preserving C# integer promotion,
+integer division, and explicit unchecked byte narrowing. Mixed custom
+`byte`/`float` expression execution currently supports Scalar and Parallel CPU;
+the built-in image formats use their specialized SIMD/GPU converters instead
+of inserting a hidden full-size floating-point staging buffer.
+
+Packed byte values with one through four components have native SIMD layout
+load/store kernels. Wider homogeneous values still use SIMD arithmetic with a
+generic layout adapter. An explicitly requested SIMD backend never silently
+falls back to a full scalar pixel-conversion pass: nonlinear `Srgb`/`Linear`
+transfer conversion must currently use Scalar, Parallel CPU, or GPU.
+
+`FastCompute.ImageProcessing` provides `Rgb24`, floating-point `Rgb`, `Gray8`,
+`GrayF32`, and separate `Srgb`/`Linear` encoding metadata. `Image<TPixel>` can
+own an array or wrap contiguous `Memory<TPixel>` without copying. It provides
+row spans, `CopyRow`, clone, crop, color conversion, grayscale conversion,
+deterministic grayscale downsampling, box blur, and subtraction:
+
+```csharp
+Image<Rgb24> decoded = Image<Rgb24>.Wrap(memory, width, height);
+Image<GrayF32> linear = decoded.ToGrayscaleF32(ColorEncoding.Linear);
+Image<GrayF32> lowPass = linear.BoxBlur(radius: 1);
+Image<GrayF32> residual = linear.Subtract(lowPass);
+```
+
+All computational image operations accept the same `ComputeOptions` contract
+as the array API. Explicit GPU execution is available for conversions between
+`Rgb24`, `Rgb`, `Gray8`, and `GrayF32`, transfer-function conversion, box blur,
+subtraction, and grayscale downsampling:
+
+```csharp
+var gpuOptions = new ComputeOptions
+{
+    Backend = ComputeBackendKind.Gpu,
+    GpuContext = gpu
+};
+
+Image<GrayF32> linearGpu = decoded.ToGrayscaleF32(
+    ColorEncoding.Linear,
+    gpuOptions);
+Image<GrayF32> lowPassGpu = linearGpu.BoxBlur(
+    radius: 1,
+    options: gpuOptions);
+```
+
+`Auto` follows the normal FastCompute thresholds. Host-backed image operations
+use `GpuSimpleThreshold`, which is disabled by default because host/device
+transfer often costs more than CPU SIMD. Lower that threshold explicitly when
+profiling shows a benefit for the target accelerator and workload. Explicit
+`Backend = ComputeBackendKind.Gpu` always requests the GPU path.
+
+For multi-stage GPU processing, upload once and keep intermediate images on the
+accelerator:
+
+```csharp
+using ImageBuffer<Rgb24> resident = decoded.UploadToGpu(gpu);
+using ImageBuffer<GrayF32> luminance = resident.ToGrayscaleF32(
+    ColorEncoding.Linear);
+using ImageBuffer<GrayF32> blur = luminance.BoxBlur(radius: 1);
+using ImageBuffer<GrayF32> residual = luminance.Subtract(blur);
+
+Image<GrayF32> result = residual.Download();
+```
+
+`ImageBuffer<TPixel>` owns its device allocation and must be disposed.
+Conversion, blur, subtraction, and downsampling operate device-to-device; only
+`UploadToGpu` and `Download` cross the host/device boundary.
+
+CPU area downsampling vectorizes accumulation across each source interval.
+GPU box blur uses parallel per-pixel kernels for small radii and switches to a
+linear-time sliding-window pass for radii greater than four.
+
 ### Arbitrary user methods
 
 When a transformation contains unrestricted application code, use
@@ -812,6 +910,7 @@ smoke test. On a Windows or Linux CI machine without a hardware GPU:
 
 ## Further documentation
 
+- [AiImageForensics usage and limitations](src/AiImageForensics/README.md)
 - [Stable release compliance](https://github.com/staszx/FastCompute.NET/blob/main/docs/stable-release-compliance.md)
 - [Additional technical requirements](https://github.com/staszx/FastCompute.NET/blob/main/docs/additional-requirements.md)
 - [Stage 1 architecture](https://github.com/staszx/FastCompute.NET/blob/main/docs/stage-1-architecture.md)
