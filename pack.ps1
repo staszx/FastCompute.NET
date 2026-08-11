@@ -21,7 +21,39 @@ function Invoke-DotNet {
     }
 }
 
+function Clear-PackageArtifacts {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+        [string]$CurrentVersion
+    )
+
+    $resolvedPath = (Resolve-Path -LiteralPath $Path).Path
+    $packageFiles = Get-ChildItem -LiteralPath $resolvedPath -File |
+        Where-Object {
+            $_.Name -like "FastCompute.*.nupkg" -or
+            $_.Name -like "FastCompute.*.snupkg"
+        }
+
+    foreach ($file in $packageFiles) {
+        Write-Host "Removing old package artifact: $($file.Name)"
+        Remove-Item -LiteralPath $file.FullName -Force
+    }
+
+    $smokeCaches = Get-ChildItem -LiteralPath $resolvedPath -Directory |
+        Where-Object {
+            $_.Name -like "package-smoke-cache-*" -and
+            $_.Name -ne "package-smoke-cache-$CurrentVersion"
+        }
+
+    foreach ($directory in $smokeCaches) {
+        Write-Host "Removing old package smoke cache: $($directory.Name)"
+        Remove-Item -LiteralPath $directory.FullName -Recurse -Force
+    }
+}
+
 New-Item -ItemType Directory -Path $packageOutput -Force | Out-Null
+Clear-PackageArtifacts -Path $packageOutput -CurrentVersion $Version
 
 Invoke-DotNet restore $solutionPath
 Invoke-DotNet build $solutionPath --configuration $Configuration --no-restore
