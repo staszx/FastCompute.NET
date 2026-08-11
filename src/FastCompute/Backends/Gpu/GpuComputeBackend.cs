@@ -128,6 +128,19 @@ internal sealed class GpuComputeBackend : IComputeBackend
             reduction,
             context);
 
+    public ComputeBackendExecution<float> ReduceZipped(
+        float[] left,
+        float[] right,
+        ComputeExpressionPlan plan,
+        ComputeReductionKind reduction,
+        ComputeExecutionContext context)
+        => ResolveContext(context).ExecuteZippedReduction(
+            left,
+            right,
+            plan,
+            reduction,
+            context);
+
     internal ComputeBackendExecution<int[]> ExecuteHistogram(
         float[] source,
         int binCount,

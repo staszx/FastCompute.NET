@@ -75,5 +75,6 @@ internal enum ComputeKernelKind
     Zip,
     Reduction,
     MapReduction,
+    ZipReduction,
     Histogram
 }

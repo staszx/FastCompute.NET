@@ -135,6 +135,56 @@ public static class GpuKernels
         destination[outputIndex] = result;
     }
 
+    /// <summary>
+    /// Applies a binary expression and executes the first reduction stage
+    /// without materializing the zipped array.
+    /// </summary>
+    public static void ZipReduce(
+        Index1D outputIndex,
+        ArrayView<float> left,
+        ArrayView<float> right,
+        ArrayView<float> destination,
+        int sourceLength,
+        ArrayView<GpuInstruction> program,
+        int instructionCount,
+        int reduction)
+    {
+        int start = outputIndex * ReductionElementsPerOutput;
+        int end = XMath.Min(start + ReductionElementsPerOutput, sourceLength);
+        bool isSum = reduction == (int)ComputeReductionKind.Sum;
+        float result = isSum
+            ? 0f
+            : Evaluate(left[start], right[start], program, instructionCount);
+        int firstIndex = isSum ? start : start + 1;
+
+        for (int index = firstIndex; index < end; index++)
+        {
+            float value = Evaluate(
+                left[index],
+                right[index],
+                program,
+                instructionCount);
+            if (isSum)
+            {
+                result += value;
+            }
+            else if (XMath.IsNaN(result) || XMath.IsNaN(value))
+            {
+                result += value;
+            }
+            else if (reduction == (int)ComputeReductionKind.Min)
+            {
+                result = XMath.Min(result, value);
+            }
+            else
+            {
+                result = XMath.Max(result, value);
+            }
+        }
+
+        destination[outputIndex] = result;
+    }
+
     /// <summary>Executes the internal Histogram accumulation kernel.</summary>
     public static void Histogram(
         Index1D index,
@@ -300,6 +350,50 @@ public static class GpuKernels
         destination[outputIndex] = result;
     }
 
+    /// <summary>Applies a double Zip and executes its first reduction stage.</summary>
+    public static void ZipReduceDouble(
+        Index1D outputIndex,
+        ArrayView<double> left,
+        ArrayView<double> right,
+        ArrayView<double> destination,
+        int sourceLength,
+        ArrayView<DoubleGpuInstruction> program,
+        int instructionCount,
+        int reduction)
+    {
+        int start = outputIndex * ReductionElementsPerOutput;
+        int end = XMath.Min(start + ReductionElementsPerOutput, sourceLength);
+        bool isSum = reduction == (int)ComputeReductionKind.Sum;
+        double result = isSum
+            ? 0d
+            : EvaluateDouble(
+                left[start], right[start], program, instructionCount);
+        int firstIndex = isSum ? start : start + 1;
+        for (int index = firstIndex; index < end; index++)
+        {
+            double value = EvaluateDouble(
+                left[index], right[index], program, instructionCount);
+            if (isSum)
+            {
+                result += value;
+            }
+            else if (XMath.IsNaN(result) || XMath.IsNaN(value))
+            {
+                result += value;
+            }
+            else if (reduction == (int)ComputeReductionKind.Min)
+            {
+                result = XMath.Min(result, value);
+            }
+            else
+            {
+                result = XMath.Max(result, value);
+            }
+        }
+
+        destination[outputIndex] = result;
+    }
+
     /// <summary>Executes the internal integer unary Map kernel.</summary>
     public static void MapInt(
         Index1D index,
@@ -388,6 +482,45 @@ public static class GpuKernels
         {
             int value = EvaluateInt(
                 source[index], 0, program, instructionCount);
+            if (isSum)
+            {
+                result += value;
+            }
+            else if (reduction == (int)ComputeReductionKind.Min)
+            {
+                result = XMath.Min(result, value);
+            }
+            else
+            {
+                result = XMath.Max(result, value);
+            }
+        }
+
+        destination[outputIndex] = result;
+    }
+
+    /// <summary>Applies an integer Zip and executes its first reduction stage.</summary>
+    public static void ZipReduceInt(
+        Index1D outputIndex,
+        ArrayView<int> left,
+        ArrayView<int> right,
+        ArrayView<int> destination,
+        int sourceLength,
+        ArrayView<IntGpuInstruction> program,
+        int instructionCount,
+        int reduction)
+    {
+        int start = outputIndex * ReductionElementsPerOutput;
+        int end = XMath.Min(start + ReductionElementsPerOutput, sourceLength);
+        bool isSum = reduction == (int)ComputeReductionKind.Sum;
+        int result = isSum
+            ? 0
+            : EvaluateInt(left[start], right[start], program, instructionCount);
+        int firstIndex = isSum ? start : start + 1;
+        for (int index = firstIndex; index < end; index++)
+        {
+            int value = EvaluateInt(
+                left[index], right[index], program, instructionCount);
             if (isSum)
             {
                 result += value;

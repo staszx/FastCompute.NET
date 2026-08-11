@@ -128,9 +128,12 @@ GPU backends apply the expression in the first reduction kernel stage. No
 full-size mapped array is materialized. This applies to `float`, `double`, and
 `int` pipelines, including chunked GPU execution.
 
-Reduction after a binary Zip graph currently consumes the fused Zip result as
-a separate operation. Fusing Zip directly into a reduction is the next
-optimization stage.
+When a reduction follows a binary Zip graph, the optimized binary expression
+is evaluated while accumulating the reduction. Scalar, Parallel CPU, and SIMD
+backends perform a single pass over both sources. GPU backends evaluate the
+Zip expression in the first reduction stage, including chunked execution. No
+full-size zipped array is materialized. This applies to `float`, `double`, and
+`int` pipelines.
 
 The allocation and execution-time difference between three independent Map
 calls and one fused pipeline can be measured with:

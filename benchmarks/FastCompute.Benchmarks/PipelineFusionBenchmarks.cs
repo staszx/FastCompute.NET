@@ -152,3 +152,52 @@ public class PipelineZipFusionBenchmarks
             .Select(value => ComputeMath.Clamp(value, 0.0f, 1.0f))
             .ToArray();
 }
+
+[MemoryDiagnoser]
+[SimpleJob(RuntimeMoniker.Net80, warmupCount: 3, iterationCount: 6)]
+public class PipelineZipReductionFusionBenchmarks
+{
+    private readonly ComputeOptions scalarOptions =
+        new()
+        {
+            Backend = ComputeBackendKind.Scalar
+        };
+    private float[] left = null!;
+    private float[] right = null!;
+
+    [Params(1_000_000)]
+    public int Count { get; set; }
+
+    [GlobalSetup]
+    public void Setup()
+    {
+        left = new float[Count];
+        right = new float[Count];
+        for (int index = 0; index < Count; index++)
+        {
+            left[index] = (index % 10_000) / 10_000.0f;
+            right[index] = ((index * 3) % 10_000) / 10_000.0f;
+        }
+    }
+
+    [Benchmark(Baseline = true)]
+    public float MaterializedZipThenSum()
+    {
+        float[] zipped = left
+            .AsCompute(scalarOptions)
+            .Select(value => value * 2.0f)
+            .Zip(right, (first, second) => first + second)
+            .Select(value => ComputeMath.Clamp(value, 0.0f, 1.0f))
+            .ToArray();
+        return Compute.Sum(zipped, scalarOptions);
+    }
+
+    [Benchmark]
+    public float FusedZipReduction() =>
+        left
+            .AsCompute(scalarOptions)
+            .Select(value => value * 2.0f)
+            .Zip(right, (first, second) => first + second)
+            .Select(value => ComputeMath.Clamp(value, 0.0f, 1.0f))
+            .Sum();
+}

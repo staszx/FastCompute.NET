@@ -291,6 +291,164 @@ internal sealed class SimdComputeBackend : IComputeBackend
             StopTiming(executionStarted, context.CollectDiagnostics));
     }
 
+    public ComputeBackendExecution<float> ReduceZipped(
+        float[] left,
+        float[] right,
+        ComputeExpressionPlan plan,
+        ComputeReductionKind reduction,
+        ComputeExecutionContext context)
+    {
+        long compilationStarted = StartTiming(context.CollectDiagnostics);
+        Func<Vector256<float>, Vector256<float>, Vector256<float>>
+            vectorOperation = SimdExpressionCompiler.CompileBinary(plan);
+        Func<float, float, float> scalarOperation =
+            CpuExpressionCompiler.CompileBinary(plan);
+        TimeSpan compilationTime =
+            StopTiming(compilationStarted, context.CollectDiagnostics);
+        int vectorizedLength =
+            left.Length - left.Length % Vector256<float>.Count;
+        ref float leftReference =
+            ref MemoryMarshal.GetArrayDataReference(left);
+        ref float rightReference =
+            ref MemoryMarshal.GetArrayDataReference(right);
+        ComputeReductionKind effectiveReduction =
+            reduction == ComputeReductionKind.Average
+                ? ComputeReductionKind.Sum
+                : reduction;
+
+        long executionStarted = StartTiming(context.CollectDiagnostics);
+        float result = effectiveReduction == ComputeReductionKind.Sum
+            ? SumZipped(
+                left,
+                right,
+                vectorizedLength,
+                ref leftReference,
+                ref rightReference,
+                vectorOperation,
+                scalarOperation,
+                context.CancellationToken)
+            : ExtremumZipped(
+                left,
+                right,
+                vectorizedLength,
+                ref leftReference,
+                ref rightReference,
+                vectorOperation,
+                scalarOperation,
+                context.CancellationToken,
+                effectiveReduction);
+        if (reduction == ComputeReductionKind.Average)
+        {
+            result /= left.Length;
+        }
+
+        return new ComputeBackendExecution<float>(
+            result,
+            compilationTime,
+            StopTiming(executionStarted, context.CollectDiagnostics));
+    }
+
+    private static float SumZipped(
+        float[] left,
+        float[] right,
+        int vectorizedLength,
+        ref float leftReference,
+        ref float rightReference,
+        Func<Vector256<float>, Vector256<float>, Vector256<float>> operation,
+        Func<float, float, float> scalarOperation,
+        CancellationToken cancellationToken)
+    {
+        Vector256<float> accumulator = Vector256<float>.Zero;
+        for (int offset = 0;
+             offset < vectorizedLength;
+             offset += Vector256<float>.Count)
+        {
+            CheckCancellation(offset, cancellationToken);
+            accumulator = Avx.Add(
+                accumulator,
+                operation(
+                    Vector256.LoadUnsafe(ref leftReference, (nuint)offset),
+                    Vector256.LoadUnsafe(ref rightReference, (nuint)offset)));
+        }
+
+        float result = 0f;
+        for (int lane = 0; lane < Vector256<float>.Count; lane++)
+        {
+            result += accumulator.GetElement(lane);
+        }
+
+        for (int index = vectorizedLength; index < left.Length; index++)
+        {
+            CheckCancellation(index, cancellationToken);
+            result += scalarOperation(left[index], right[index]);
+        }
+
+        return result;
+    }
+
+    private static float ExtremumZipped(
+        float[] left,
+        float[] right,
+        int vectorizedLength,
+        ref float leftReference,
+        ref float rightReference,
+        Func<Vector256<float>, Vector256<float>, Vector256<float>> operation,
+        Func<float, float, float> scalarOperation,
+        CancellationToken cancellationToken,
+        ComputeReductionKind reduction)
+    {
+        if (vectorizedLength == 0)
+        {
+            float scalarResult = scalarOperation(left[0], right[0]);
+            for (int index = 1; index < left.Length; index++)
+            {
+                CheckCancellation(index, cancellationToken);
+                scalarResult = ApplyScalarExtremum(
+                    reduction,
+                    scalarResult,
+                    scalarOperation(left[index], right[index]));
+            }
+
+            return scalarResult;
+        }
+
+        Vector256<float> accumulator = operation(
+            Vector256.LoadUnsafe(ref leftReference),
+            Vector256.LoadUnsafe(ref rightReference));
+        for (int offset = Vector256<float>.Count;
+             offset < vectorizedLength;
+             offset += Vector256<float>.Count)
+        {
+            CheckCancellation(offset, cancellationToken);
+            Vector256<float> value = operation(
+                Vector256.LoadUnsafe(ref leftReference, (nuint)offset),
+                Vector256.LoadUnsafe(ref rightReference, (nuint)offset));
+            accumulator = reduction == ComputeReductionKind.Min
+                ? SimdVectorOperations.Minimum(accumulator, value)
+                : SimdVectorOperations.Maximum(accumulator, value);
+        }
+
+        float result = accumulator.GetElement(0);
+        for (int lane = 1; lane < Vector256<float>.Count; lane++)
+        {
+            result = ApplyScalarExtremum(
+                reduction,
+                result,
+                accumulator.GetElement(lane));
+        }
+
+        for (int index = vectorizedLength; index < left.Length; index++)
+        {
+            CheckCancellation(index, cancellationToken);
+            result = ApplyScalarExtremum(
+                reduction,
+                result,
+                scalarOperation(left[index], right[index]));
+        }
+
+        return result;
+    }
+
     private static float SumMapped(
         float[] source,
         int vectorizedLength,

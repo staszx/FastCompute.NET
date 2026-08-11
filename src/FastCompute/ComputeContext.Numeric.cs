@@ -612,6 +612,33 @@ public sealed partial class ComputeContext
                 options);
     }
 
+    internal T ExecuteNumericZippedReduction<T>(
+        T[] left,
+        T[] right,
+        NumericExpressionProgram<T> program,
+        ComputeReductionKind reduction,
+        ComputeOptions options)
+        where T : unmanaged, INumber<T>
+    {
+        ThrowIfDisposed();
+        options.CancellationToken.ThrowIfCancellationRequested();
+        ValidateNumericGpuType<T>();
+        ValidateNumericProgram(program);
+        return typeof(T) == typeof(double)
+            ? (T)(object)ExecuteDoubleZippedReduction(
+                (double[])(object)left,
+                (double[])(object)right,
+                (NumericExpressionProgram<double>)(object)program,
+                reduction,
+                options)
+            : (T)(object)ExecuteIntZippedReduction(
+                (int[])(object)left,
+                (int[])(object)right,
+                (NumericExpressionProgram<int>)(object)program,
+                reduction,
+                options);
+    }
+
     private double[] ExecuteDoubleMap(
         double[] source,
         NumericExpressionProgram<double> program,
@@ -990,6 +1017,98 @@ public sealed partial class ComputeContext
             : combined;
     }
 
+    private double ExecuteDoubleZippedReduction(
+        double[] left,
+        double[] right,
+        NumericExpressionProgram<double> program,
+        ComputeReductionKind reduction,
+        ComputeOptions options)
+    {
+        ComputeReductionKind effective = reduction ==
+            ComputeReductionKind.Average
+            ? ComputeReductionKind.Sum
+            : reduction;
+        var instructions = program.Instructions
+            .Select(item => new DoubleGpuInstruction(
+                (int)item.OpCode,
+                item.Operand))
+            .ToArray();
+        var zipReductionKernel = GetNumericKernel<
+            Action<
+                Index1D,
+                ArrayView<double>,
+                ArrayView<double>,
+                ArrayView<double>,
+                int,
+                ArrayView<DoubleGpuInstruction>,
+                int,
+                int>>(
+            typeof(double),
+            ComputeKernelKind.ZipReduction);
+        var reductionKernel = GetNumericKernel<
+            Action<
+                Index1D,
+                ArrayView<double>,
+                ArrayView<double>,
+                int,
+                int>>(
+            typeof(double),
+            ComputeKernelKind.Reduction);
+        int chunkSize = GetNumericChunkSize(
+            left.Length,
+            sizeof(double),
+            fullLengthBufferCount: 3,
+            instructions.LongLength * (sizeof(int) + sizeof(double)),
+            options);
+        double combined = 0d;
+        bool hasValue = false;
+        using MemoryBuffer1D<DoubleGpuInstruction, Stride1D.Dense>
+            instructionBuffer = accelerator.Allocate1D(instructions);
+        for (int offset = 0; offset < left.Length; offset += chunkSize)
+        {
+            options.CancellationToken.ThrowIfCancellationRequested();
+            int count = Math.Min(chunkSize, left.Length - offset);
+            int firstPassLength =
+                (count + GpuKernels.ReductionElementsPerOutput - 1) /
+                GpuKernels.ReductionElementsPerOutput;
+            using MemoryBuffer1D<double, Stride1D.Dense> leftBuffer =
+                accelerator.Allocate1D<double>(count);
+            using MemoryBuffer1D<double, Stride1D.Dense> rightBuffer =
+                accelerator.Allocate1D<double>(count);
+            using MemoryBuffer1D<double, Stride1D.Dense> firstPassBuffer =
+                accelerator.Allocate1D<double>(firstPassLength);
+            leftBuffer.View.CopyFromCPU(
+                accelerator.DefaultStream,
+                left.AsSpan(offset, count));
+            rightBuffer.View.CopyFromCPU(
+                accelerator.DefaultStream,
+                right.AsSpan(offset, count));
+            zipReductionKernel(
+                firstPassLength,
+                leftBuffer.View,
+                rightBuffer.View,
+                firstPassBuffer.View,
+                count,
+                instructionBuffer.View,
+                instructions.Length,
+                (int)effective);
+            double partial = ReduceDoubleBuffer(
+                firstPassBuffer,
+                firstPassLength,
+                effective,
+                reductionKernel);
+            combined = CombineDouble(
+                combined,
+                partial,
+                effective,
+                ref hasValue);
+        }
+
+        return reduction == ComputeReductionKind.Average
+            ? combined / left.Length
+            : combined;
+    }
+
     private int ExecuteIntReduction(
         int[] source,
         ComputeReductionKind reduction,
@@ -1123,6 +1242,98 @@ public sealed partial class ComputeContext
 
         return reduction == ComputeReductionKind.Average
             ? combined / source.Length
+            : combined;
+    }
+
+    private int ExecuteIntZippedReduction(
+        int[] left,
+        int[] right,
+        NumericExpressionProgram<int> program,
+        ComputeReductionKind reduction,
+        ComputeOptions options)
+    {
+        ComputeReductionKind effective = reduction ==
+            ComputeReductionKind.Average
+            ? ComputeReductionKind.Sum
+            : reduction;
+        var instructions = program.Instructions
+            .Select(item => new IntGpuInstruction(
+                (int)item.OpCode,
+                item.Operand))
+            .ToArray();
+        var zipReductionKernel = GetNumericKernel<
+            Action<
+                Index1D,
+                ArrayView<int>,
+                ArrayView<int>,
+                ArrayView<int>,
+                int,
+                ArrayView<IntGpuInstruction>,
+                int,
+                int>>(
+            typeof(int),
+            ComputeKernelKind.ZipReduction);
+        var reductionKernel = GetNumericKernel<
+            Action<
+                Index1D,
+                ArrayView<int>,
+                ArrayView<int>,
+                int,
+                int>>(
+            typeof(int),
+            ComputeKernelKind.Reduction);
+        int chunkSize = GetNumericChunkSize(
+            left.Length,
+            sizeof(int),
+            fullLengthBufferCount: 3,
+            instructions.LongLength * (sizeof(int) * 2L),
+            options);
+        int combined = 0;
+        bool hasValue = false;
+        using MemoryBuffer1D<IntGpuInstruction, Stride1D.Dense>
+            instructionBuffer = accelerator.Allocate1D(instructions);
+        for (int offset = 0; offset < left.Length; offset += chunkSize)
+        {
+            options.CancellationToken.ThrowIfCancellationRequested();
+            int count = Math.Min(chunkSize, left.Length - offset);
+            int firstPassLength =
+                (count + GpuKernels.ReductionElementsPerOutput - 1) /
+                GpuKernels.ReductionElementsPerOutput;
+            using MemoryBuffer1D<int, Stride1D.Dense> leftBuffer =
+                accelerator.Allocate1D<int>(count);
+            using MemoryBuffer1D<int, Stride1D.Dense> rightBuffer =
+                accelerator.Allocate1D<int>(count);
+            using MemoryBuffer1D<int, Stride1D.Dense> firstPassBuffer =
+                accelerator.Allocate1D<int>(firstPassLength);
+            leftBuffer.View.CopyFromCPU(
+                accelerator.DefaultStream,
+                left.AsSpan(offset, count));
+            rightBuffer.View.CopyFromCPU(
+                accelerator.DefaultStream,
+                right.AsSpan(offset, count));
+            zipReductionKernel(
+                firstPassLength,
+                leftBuffer.View,
+                rightBuffer.View,
+                firstPassBuffer.View,
+                count,
+                instructionBuffer.View,
+                instructions.Length,
+                (int)effective);
+            int partial = ReduceIntBuffer(
+                firstPassBuffer,
+                firstPassLength,
+                effective,
+                reductionKernel);
+            combined = CombineInt(
+                combined,
+                partial,
+                effective,
+                ref hasValue);
+        }
+
+        return reduction == ComputeReductionKind.Average
+            ? combined / left.Length
             : combined;
     }
 
@@ -1274,6 +1485,16 @@ public sealed partial class ComputeContext
                         ArrayView<DoubleGpuInstruction>,
                         int,
                         int>(GpuKernels.MapReduceDouble),
+                ComputeKernelKind.ZipReduction =>
+                    accelerator.LoadAutoGroupedStreamKernel<
+                        Index1D,
+                        ArrayView<double>,
+                        ArrayView<double>,
+                        ArrayView<double>,
+                        int,
+                        ArrayView<DoubleGpuInstruction>,
+                        int,
+                        int>(GpuKernels.ZipReduceDouble),
                 _ => throw new ArgumentOutOfRangeException(nameof(kind))
             };
         }
@@ -1311,6 +1532,16 @@ public sealed partial class ComputeContext
                     ArrayView<IntGpuInstruction>,
                     int,
                     int>(GpuKernels.MapReduceInt),
+            ComputeKernelKind.ZipReduction =>
+                accelerator.LoadAutoGroupedStreamKernel<
+                    Index1D,
+                    ArrayView<int>,
+                    ArrayView<int>,
+                    ArrayView<int>,
+                    int,
+                    ArrayView<IntGpuInstruction>,
+                    int,
+                    int>(GpuKernels.ZipReduceInt),
             _ => throw new ArgumentOutOfRangeException(nameof(kind))
         };
     }

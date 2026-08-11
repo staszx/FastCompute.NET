@@ -225,11 +225,25 @@ public sealed class ComputePipeline<T>
     {
         if (zipNode is not null)
         {
-            return ReduceArray(
-                ExecuteZip(
-                    ComputePipelineOptimizer.Optimize(zipNode, tail),
-                    inPlace: false),
-                reduction);
+            Expression<Func<T, T, T>> zippedExpression =
+                ComputePipelineOptimizer.Optimize(zipNode, tail);
+            if (typeof(T) == typeof(float))
+            {
+                float result = Compute.ReduceZipped(
+                    (float[])(object)source,
+                    (float[])(object)zipNode.Right,
+                    (Expression<Func<float, float, float>>)(object)zippedExpression,
+                    reduction,
+                    options);
+                return (T)(object)result;
+            }
+
+            return Compute.ReduceZipped(
+                source,
+                zipNode.Right,
+                zippedExpression,
+                reduction,
+                options);
         }
 
         Expression<Func<T, T>>? expression =
@@ -250,17 +264,6 @@ public sealed class ComputePipeline<T>
         return expression is null
             ? ReduceNumeric(source, reduction)
             : Compute.ReduceMapped(source, expression, reduction, options);
-    }
-
-    private T ReduceArray(T[] input, ComputeReductionKind reduction)
-    {
-        if (typeof(T) == typeof(float))
-        {
-            float result = ReduceFloat((float[])(object)input, reduction);
-            return (T)(object)result;
-        }
-
-        return ReduceNumeric(input, reduction);
     }
 
     private float ReduceFloat(

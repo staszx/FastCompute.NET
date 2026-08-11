@@ -142,6 +142,78 @@ public static partial class Compute
         };
     }
 
+    internal static T ReduceZipped<T>(
+        T[] left,
+        T[] right,
+        Expression<Func<T, T, T>> expression,
+        ComputeReductionKind reduction,
+        ComputeOptions? options)
+        where T : unmanaged, INumber<T>
+    {
+        ArgumentNullException.ThrowIfNull(left);
+        ArgumentNullException.ThrowIfNull(right);
+        ArgumentNullException.ThrowIfNull(expression);
+        ValidateNumericType<T>();
+        if (left.Length != right.Length)
+        {
+            throw new ArgumentException(
+                $"Zip requires arrays of equal length, but received " +
+                $"{left.Length} and {right.Length}.",
+                nameof(right));
+        }
+
+        ComputeOptions effective = ValidateOptions(options);
+        effective.CancellationToken.ThrowIfCancellationRequested();
+        NumericExpressionProgram<T> program =
+            NumericExpressionParser.Parse<T>(expression);
+        if (left.Length == 0)
+        {
+            if (reduction == ComputeReductionKind.Sum)
+            {
+                return T.Zero;
+            }
+
+            throw new InvalidOperationException(
+                $"{reduction} is not defined for an empty array.");
+        }
+
+        ComputeBackendKind backend = ResolveNumericBackend(
+            effective,
+            program,
+            left.Length);
+        return backend switch
+        {
+            ComputeBackendKind.Scalar => NumericCpuExecutor.ReduceZippedScalar(
+                left,
+                right,
+                program,
+                reduction,
+                effective.CancellationToken),
+            ComputeBackendKind.ParallelCpu =>
+                NumericCpuExecutor.ReduceZippedParallel(
+                    left,
+                    right,
+                    program,
+                    reduction,
+                    effective),
+            ComputeBackendKind.Simd => NumericSimdExecutor.ReduceZipped(
+                left,
+                right,
+                program,
+                reduction,
+                effective.CancellationToken),
+            ComputeBackendKind.Gpu => ResolveNumericGpuContext(effective)
+                .ExecuteNumericZippedReduction(
+                    left,
+                    right,
+                    program,
+                    reduction,
+                    effective),
+            _ => throw new InvalidOperationException(
+                $"Unexpected numeric backend '{backend}'.")
+        };
+    }
+
     private static T[] RunNumeric<T>(
         T[] source,
         Expression<Func<T, T>> expression,

@@ -598,6 +598,43 @@ public static partial class Compute
             .Value;
     }
 
+    internal static float ReduceZipped(
+        float[] left,
+        float[] right,
+        Expression<Func<float, float, float>> expression,
+        ComputeReductionKind reduction,
+        ComputeOptions? options)
+    {
+        ArgumentNullException.ThrowIfNull(left);
+        ArgumentNullException.ThrowIfNull(right);
+        ArgumentNullException.ThrowIfNull(expression);
+        if (left.Length != right.Length)
+        {
+            throw new ArgumentException(
+                $"Zip requires arrays of equal length, but received " +
+                $"{left.Length} and {right.Length}.",
+                nameof(right));
+        }
+
+        ComputeOptions effectiveOptions = ValidateOptions(options);
+        effectiveOptions.CancellationToken.ThrowIfCancellationRequested();
+        ComputeExpressionPlan plan = CreatePlan(expression, effectiveOptions);
+        if (left.Length == 0 && reduction != ComputeReductionKind.Sum)
+        {
+            throw new InvalidOperationException(
+                $"Cannot compute {reduction} for an empty array.");
+        }
+
+        BackendResolution resolution =
+            ResolveBackend(effectiveOptions, plan, left.Length);
+        var context = CreateExecutionContext(
+            effectiveOptions,
+            collectDiagnostics: false);
+        return resolution.Backend
+            .ReduceZipped(left, right, plan, reduction, context)
+            .Value;
+    }
+
     private static float[] RunCore(
         float[] source,
         Expression<Func<float, float>> expression,

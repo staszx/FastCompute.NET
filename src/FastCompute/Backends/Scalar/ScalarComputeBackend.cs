@@ -210,6 +210,48 @@ internal sealed class ScalarComputeBackend : IComputeBackend
             StopTiming(executionStarted, context.CollectDiagnostics));
     }
 
+    public ComputeBackendExecution<float> ReduceZipped(
+        float[] left,
+        float[] right,
+        ComputeExpressionPlan plan,
+        ComputeReductionKind reduction,
+        ComputeExecutionContext context)
+    {
+        long compilationStarted = StartTiming(context.CollectDiagnostics);
+        Func<float, float, float> operation =
+            CpuExpressionCompiler.CompileBinary(plan);
+        TimeSpan compilationTime =
+            StopTiming(compilationStarted, context.CollectDiagnostics);
+        long executionStarted = StartTiming(context.CollectDiagnostics);
+        bool isSum = reduction is ComputeReductionKind.Sum or
+            ComputeReductionKind.Average;
+        float result = isSum ? 0f : operation(left[0], right[0]);
+        int firstIndex = isSum ? 0 : 1;
+        for (int index = firstIndex; index < left.Length; index++)
+        {
+            CheckCancellation(index, context.CancellationToken);
+            float value = operation(left[index], right[index]);
+            result = reduction switch
+            {
+                ComputeReductionKind.Sum or ComputeReductionKind.Average =>
+                    result + value,
+                ComputeReductionKind.Min => GpuMath.Min(result, value),
+                ComputeReductionKind.Max => GpuMath.Max(result, value),
+                _ => throw new ArgumentOutOfRangeException(nameof(reduction))
+            };
+        }
+
+        if (reduction == ComputeReductionKind.Average)
+        {
+            result /= left.Length;
+        }
+
+        return new ComputeBackendExecution<float>(
+            result,
+            compilationTime,
+            StopTiming(executionStarted, context.CollectDiagnostics));
+    }
+
     private static float ReduceMappedCore(
         float[] source,
         Func<float, float> operation,

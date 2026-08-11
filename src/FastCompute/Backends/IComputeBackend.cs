@@ -31,4 +31,11 @@ internal interface IComputeBackend
         ComputeExpressionPlan plan,
         ComputeReductionKind reduction,
         ComputeExecutionContext context);
+
+    ComputeBackendExecution<float> ReduceZipped(
+        float[] left,
+        float[] right,
+        ComputeExpressionPlan plan,
+        ComputeReductionKind reduction,
+        ComputeExecutionContext context);
 }

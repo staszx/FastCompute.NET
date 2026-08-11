@@ -14,6 +14,9 @@ All notable changes to FastCompute.NET are documented in this file.
 - Lazy pipelines can record one binary `Zip`; selectors before and after it
   fuse into one Scalar, Parallel CPU, SIMD, or GPU Zip operation for `float`,
   `double`, and `int`, including chunked and explicit in-place execution.
+- Lazy binary Zip graphs followed by `Sum`, `Min`, `Max`, or `Average` now
+  evaluate and reduce in one fused operation without materializing a zipped
+  array on any backend, including chunked GPU execution.
 
 ## 0.7.0 - 2026-07-30
 

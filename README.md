@@ -154,8 +154,10 @@ Reduction terminals are fused as well. A selector chain followed by `Sum`,
 `Min`, `Max`, or `Average` transforms values while reducing them, without
 materializing a full-size mapped array. GPU execution applies the selector
 expression in the first reduction kernel stage, including chunked execution.
-Reduction after a Zip graph currently consumes the fused Zip result as a
-separate operation.
+The same terminals fuse a binary Zip graph directly into the reduction, so
+neither mapped nor zipped intermediate arrays are materialized. This applies
+to `float`, `double`, and `int` on every backend, including chunked GPU
+execution.
 
 Pipelines can be configured in three ways:
 

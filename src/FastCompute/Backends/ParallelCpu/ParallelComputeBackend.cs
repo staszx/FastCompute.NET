@@ -351,6 +351,79 @@ internal sealed class ParallelComputeBackend : IComputeBackend
             StopTiming(executionStarted, context.CollectDiagnostics));
     }
 
+    public ComputeBackendExecution<float> ReduceZipped(
+        float[] left,
+        float[] right,
+        ComputeExpressionPlan plan,
+        ComputeReductionKind reduction,
+        ComputeExecutionContext context)
+    {
+        long compilationStarted = StartTiming(context.CollectDiagnostics);
+        Func<float, float, float> operation =
+            CpuExpressionCompiler.CompileBinary(plan);
+        TimeSpan compilationTime =
+            StopTiming(compilationStarted, context.CollectDiagnostics);
+        ComputeReductionKind effectiveReduction =
+            reduction == ComputeReductionKind.Average
+                ? ComputeReductionKind.Sum
+                : reduction;
+        int chunkSize = GetChunkSize(
+            left.Length,
+            context.MaxDegreeOfParallelism);
+        int chunkCount = GetChunkCount(left.Length, chunkSize);
+        var partialResults = new float[chunkCount];
+        ParallelOptions options = CreateParallelOptions(context);
+
+        long executionStarted = StartTiming(context.CollectDiagnostics);
+        Parallel.For(
+            0,
+            chunkCount,
+            options,
+            chunkIndex =>
+            {
+                int start = chunkIndex * chunkSize;
+                int end = (int)Math.Min((long)start + chunkSize, left.Length);
+                bool isSum = effectiveReduction == ComputeReductionKind.Sum;
+                float partial = isSum
+                    ? 0f
+                    : operation(left[start], right[start]);
+                int firstIndex = isSum ? start : start + 1;
+                for (int index = firstIndex; index < end; index++)
+                {
+                    CheckCancellation(index - start, context.CancellationToken);
+                    partial = ApplyReduction(
+                        effectiveReduction,
+                        partial,
+                        operation(left[index], right[index]));
+                }
+
+                partialResults[chunkIndex] = partial;
+            });
+
+        float result = effectiveReduction == ComputeReductionKind.Sum
+            ? 0f
+            : partialResults[0];
+        int firstPartial = effectiveReduction == ComputeReductionKind.Sum ? 0 : 1;
+        for (int index = firstPartial; index < partialResults.Length; index++)
+        {
+            CheckCancellation(index, context.CancellationToken);
+            result = ApplyReduction(
+                effectiveReduction,
+                result,
+                partialResults[index]);
+        }
+
+        if (reduction == ComputeReductionKind.Average)
+        {
+            result /= left.Length;
+        }
+
+        return new ComputeBackendExecution<float>(
+            result,
+            compilationTime,
+            StopTiming(executionStarted, context.CollectDiagnostics));
+    }
+
     private static float ApplyReduction(
         ComputeReductionKind reduction,
         float left,

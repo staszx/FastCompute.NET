@@ -148,6 +148,34 @@ internal static class NumericCpuExecutor
             : result;
     }
 
+    internal static T ReduceZippedScalar<T>(
+        T[] left,
+        T[] right,
+        NumericExpressionProgram<T> program,
+        ComputeReductionKind reduction,
+        CancellationToken cancellationToken)
+        where T : unmanaged, INumber<T>
+    {
+        bool isSum = reduction is ComputeReductionKind.Sum or
+            ComputeReductionKind.Average;
+        T result = isSum
+            ? T.Zero
+            : Evaluate(left[0], right[0], program);
+        int firstIndex = isSum ? 0 : 1;
+        for (int index = firstIndex; index < left.Length; index++)
+        {
+            CheckCancellation(index, cancellationToken);
+            result = ApplyReduction(
+                reduction,
+                result,
+                Evaluate(left[index], right[index], program));
+        }
+
+        return reduction == ComputeReductionKind.Average
+            ? result / T.CreateChecked(left.Length)
+            : result;
+    }
+
     internal static T ReduceParallel<T>(
         T[] source,
         ComputeReductionKind reduction,
@@ -268,6 +296,65 @@ internal static class NumericCpuExecutor
 
         return reduction == ComputeReductionKind.Average
             ? result / T.CreateChecked(source.Length)
+            : result;
+    }
+
+    internal static T ReduceZippedParallel<T>(
+        T[] left,
+        T[] right,
+        NumericExpressionProgram<T> program,
+        ComputeReductionKind reduction,
+        ComputeOptions options)
+        where T : unmanaged, INumber<T>
+    {
+        int processorCount = options.MaxDegreeOfParallelism is > 0
+            ? options.MaxDegreeOfParallelism.Value
+            : Environment.ProcessorCount;
+        int chunkCount = Math.Min(
+            left.Length,
+            Math.Max(1, processorCount));
+        int chunkSize = (left.Length + chunkCount - 1) / chunkCount;
+        var partials = new T[chunkCount];
+        bool isSum = reduction is ComputeReductionKind.Sum or
+            ComputeReductionKind.Average;
+
+        Parallel.For(
+            0,
+            chunkCount,
+            new ParallelOptions
+            {
+                CancellationToken = options.CancellationToken,
+                MaxDegreeOfParallelism =
+                    options.MaxDegreeOfParallelism ?? -1
+            },
+            chunk =>
+            {
+                int start = chunk * chunkSize;
+                int end = Math.Min(start + chunkSize, left.Length);
+                T partial = isSum
+                    ? T.Zero
+                    : Evaluate(left[start], right[start], program);
+                int first = isSum ? start : start + 1;
+                for (int index = first; index < end; index++)
+                {
+                    partial = ApplyReduction(
+                        reduction,
+                        partial,
+                        Evaluate(left[index], right[index], program));
+                }
+
+                partials[chunk] = partial;
+            });
+
+        T result = isSum ? T.Zero : partials[0];
+        int firstPartial = isSum ? 0 : 1;
+        for (int index = firstPartial; index < partials.Length; index++)
+        {
+            result = ApplyReduction(reduction, result, partials[index]);
+        }
+
+        return reduction == ComputeReductionKind.Average
+            ? result / T.CreateChecked(left.Length)
             : result;
     }
 
