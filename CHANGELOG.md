@@ -11,6 +11,9 @@ All notable changes to FastCompute.NET are documented in this file.
   backends without materializing an intermediate mapped array.
 - Map-reduction fusion supports `float`, `double`, and `int`, including chunked
   GPU execution.
+- Lazy pipelines can record one binary `Zip`; selectors before and after it
+  fuse into one Scalar, Parallel CPU, SIMD, or GPU Zip operation for `float`,
+  `double`, and `int`, including chunked and explicit in-place execution.
 
 ## 0.7.0 - 2026-07-30
 

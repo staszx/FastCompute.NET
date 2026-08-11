@@ -133,10 +133,29 @@ constant folding and IEEE-safe simplification. The resulting expression is
 executed as one Map operation, which means one Parallel/SIMD pass or one GPU
 Map kernel instead of one pass per `Select`.
 
+A pipeline can record one binary `Zip` node. Selectors before and after it are
+substituted into one binary expression and execute as one Zip operation:
+
+```csharp
+float[] combined = left
+    .AsCompute()
+    .Select(value => value * 2.0f)
+    .Zip(right, (first, second) => first + second)
+    .Select(value => ComputeMath.Clamp(value, 0.0f, 1.0f))
+    .ToArray();
+```
+
+The right array remains lazy by reference and must have the same length as the
+left array when the terminal operation runs. `ToArrayInPlace` explicitly
+stores the fused Zip result in the left source array. A second Zip is rejected
+because it would require a multi-input graph with more than two source arrays.
+
 Reduction terminals are fused as well. A selector chain followed by `Sum`,
 `Min`, `Max`, or `Average` transforms values while reducing them, without
 materializing a full-size mapped array. GPU execution applies the selector
 expression in the first reduction kernel stage, including chunked execution.
+Reduction after a Zip graph currently consumes the fused Zip result as a
+separate operation.
 
 Pipelines can be configured in three ways:
 

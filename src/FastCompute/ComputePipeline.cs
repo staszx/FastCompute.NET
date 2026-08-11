@@ -18,29 +18,35 @@ public sealed class ComputePipeline<T>
     private readonly T[] source;
     private readonly ComputeOptions options;
     private readonly ComputePipelineNode<T>? tail;
+    private readonly ComputePipelineZipNode<T>? zipNode;
 
     internal ComputePipeline(
         T[] source,
         ComputeOptions options)
-        : this(source, options, tail: null)
+        : this(source, options, tail: null, zipNode: null)
     {
     }
 
     private ComputePipeline(
         T[] source,
         ComputeOptions options,
-        ComputePipelineNode<T>? tail)
+        ComputePipelineNode<T>? tail,
+        ComputePipelineZipNode<T>? zipNode)
     {
         this.source = source;
         this.options = options;
         this.tail = tail;
+        this.zipNode = zipNode;
     }
 
     /// <summary>Gets the source array length without executing the pipeline.</summary>
     public int Length => source.Length;
 
     /// <summary>Gets the number of recorded operations.</summary>
-    public int OperationCount => tail?.OperationCount ?? 0;
+    public int OperationCount =>
+        (zipNode?.LeftTail?.OperationCount ?? 0) +
+        (zipNode is null ? 0 : 1) +
+        (tail?.OperationCount ?? 0);
 
     /// <summary>
     /// Records a mapping operation without executing it.
@@ -61,10 +67,44 @@ public sealed class ComputePipeline<T>
         Append(expression, allowBufferReuse: true);
 
     /// <summary>
+    /// Records a binary operation with a second array without executing it.
+    /// </summary>
+    /// <remarks>
+    /// Selectors recorded before and after this operation are fused into the
+    /// resulting binary expression. A pipeline currently supports one Zip
+    /// node because additional Zip nodes require more than two source arrays.
+    /// </remarks>
+    public ComputePipeline<T> Zip(
+        T[] right,
+        Expression<Func<T, T, T>> expression)
+    {
+        ArgumentNullException.ThrowIfNull(right);
+        ArgumentNullException.ThrowIfNull(expression);
+        if (zipNode is not null)
+        {
+            throw new NotSupportedException(
+                "A lazy pipeline currently supports one Zip operation.");
+        }
+
+        return new ComputePipeline<T>(
+            source,
+            options,
+            tail: null,
+            zipNode: new ComputePipelineZipNode<T>(tail, right, expression));
+    }
+
+    /// <summary>
     /// Optimizes and executes the pipeline and returns a new managed array.
     /// </summary>
     public T[] ToArray()
     {
+        if (zipNode is not null)
+        {
+            return ExecuteZip(
+                ComputePipelineOptimizer.Optimize(zipNode, tail),
+                inPlace: false);
+        }
+
         Expression<Func<T, T>>? expression =
             ComputePipelineOptimizer.Optimize(tail);
         if (expression is null)
@@ -81,6 +121,13 @@ public sealed class ComputePipeline<T>
     /// <returns>The same array instance that was passed to <c>AsCompute</c>.</returns>
     public T[] ToArrayInPlace()
     {
+        if (zipNode is not null)
+        {
+            return ExecuteZip(
+                ComputePipelineOptimizer.Optimize(zipNode, tail),
+                inPlace: true);
+        }
+
         Expression<Func<T, T>>? expression =
             ComputePipelineOptimizer.Optimize(tail);
         if (expression is null)
@@ -114,7 +161,8 @@ public sealed class ComputePipeline<T>
             new ComputePipelineNode<T>(
                 tail,
                 expression,
-                allowBufferReuse));
+                allowBufferReuse),
+            zipNode);
     }
 
     private T[] ExecuteMap(
@@ -143,8 +191,47 @@ public sealed class ComputePipeline<T>
             : Compute.Run(source, expression, options);
     }
 
+    private T[] ExecuteZip(
+        Expression<Func<T, T, T>> expression,
+        bool inPlace)
+    {
+        T[] right = zipNode!.Right;
+        if (typeof(T) == typeof(float))
+        {
+            var floatSource = (float[])(object)source;
+            var floatRight = (float[])(object)right;
+            var floatExpression =
+                (Expression<Func<float, float, float>>)(object)expression;
+            float[] result = inPlace
+                ? Compute.ZipInPlace(
+                    floatSource,
+                    floatRight,
+                    floatExpression,
+                    options)
+                : Compute.Zip(
+                    floatSource,
+                    floatRight,
+                    floatExpression,
+                    options);
+            return (T[])(object)result;
+        }
+
+        return inPlace
+            ? Compute.ZipInPlace(source, right, expression, options)
+            : Compute.Zip(source, right, expression, options);
+    }
+
     private T Reduce(ComputeReductionKind reduction)
     {
+        if (zipNode is not null)
+        {
+            return ReduceArray(
+                ExecuteZip(
+                    ComputePipelineOptimizer.Optimize(zipNode, tail),
+                    inPlace: false),
+                reduction);
+        }
+
         Expression<Func<T, T>>? expression =
             ComputePipelineOptimizer.Optimize(tail);
         if (typeof(T) == typeof(float))
@@ -163,6 +250,17 @@ public sealed class ComputePipeline<T>
         return expression is null
             ? ReduceNumeric(source, reduction)
             : Compute.ReduceMapped(source, expression, reduction, options);
+    }
+
+    private T ReduceArray(T[] input, ComputeReductionKind reduction)
+    {
+        if (typeof(T) == typeof(float))
+        {
+            float result = ReduceFloat((float[])(object)input, reduction);
+            return (T)(object)result;
+        }
+
+        return ReduceNumeric(input, reduction);
     }
 
     private float ReduceFloat(
@@ -190,6 +288,26 @@ public sealed class ComputePipeline<T>
                 Compute.Average(input, options),
             _ => throw new ArgumentOutOfRangeException(nameof(reduction))
         };
+}
+
+internal sealed class ComputePipelineZipNode<T>
+    where T : unmanaged, INumber<T>
+{
+    internal ComputePipelineZipNode(
+        ComputePipelineNode<T>? leftTail,
+        T[] right,
+        Expression<Func<T, T, T>> expression)
+    {
+        LeftTail = leftTail;
+        Right = right;
+        Expression = expression;
+    }
+
+    internal ComputePipelineNode<T>? LeftTail { get; }
+
+    internal T[] Right { get; }
+
+    internal Expression<Func<T, T, T>> Expression { get; }
 }
 
 internal sealed class ComputePipelineNode<T>
@@ -245,6 +363,55 @@ internal static class ComputePipelineOptimizer
         }
 
         return Expression.Lambda<Func<T, T>>(body, parameter);
+    }
+
+    internal static Expression<Func<T, T, T>> Optimize<T>(
+        ComputePipelineZipNode<T> zipNode,
+        ComputePipelineNode<T>? tail)
+        where T : unmanaged, INumber<T>
+    {
+        var left = Expression.Parameter(typeof(T), "left");
+        var right = Expression.Parameter(typeof(T), "right");
+        Expression leftBody = Apply(zipNode.LeftTail, left);
+        Expression body = new PipelineParameterReplacer(
+                zipNode.Expression.Parameters[0],
+                leftBody)
+            .Visit(zipNode.Expression.Body)!;
+        body = new PipelineParameterReplacer(
+                zipNode.Expression.Parameters[1],
+                right)
+            .Visit(body)!;
+        body = Apply(tail, body);
+        return Expression.Lambda<Func<T, T, T>>(body, left, right);
+    }
+
+    private static Expression Apply<T>(
+        ComputePipelineNode<T>? tail,
+        Expression body)
+        where T : unmanaged, INumber<T>
+    {
+        if (tail is null)
+        {
+            return body;
+        }
+
+        var nodes = new ComputePipelineNode<T>[tail.OperationCount];
+        ComputePipelineNode<T>? current = tail;
+        for (int index = nodes.Length - 1; index >= 0; index--)
+        {
+            nodes[index] = current!;
+            current = current!.Previous;
+        }
+
+        foreach (ComputePipelineNode<T> node in nodes)
+        {
+            body = new PipelineParameterReplacer(
+                    node.Expression.Parameters[0],
+                    body)
+                .Visit(node.Expression.Body)!;
+        }
+
+        return body;
     }
 
     private sealed class PipelineParameterReplacer(

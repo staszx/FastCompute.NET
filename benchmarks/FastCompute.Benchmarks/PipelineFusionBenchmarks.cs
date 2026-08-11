@@ -97,3 +97,58 @@ public class PipelineReductionFusionBenchmarks
             .Select(value => ComputeMath.Clamp(value, 0.0f, 2.0f))
             .Sum();
 }
+
+[MemoryDiagnoser]
+[SimpleJob(RuntimeMoniker.Net80, warmupCount: 3, iterationCount: 6)]
+public class PipelineZipFusionBenchmarks
+{
+    private readonly ComputeOptions scalarOptions =
+        new()
+        {
+            Backend = ComputeBackendKind.Scalar
+        };
+    private float[] left = null!;
+    private float[] right = null!;
+
+    [Params(1_000_000)]
+    public int Count { get; set; }
+
+    [GlobalSetup]
+    public void Setup()
+    {
+        left = new float[Count];
+        right = new float[Count];
+        for (int index = 0; index < Count; index++)
+        {
+            left[index] = (index % 10_000) / 10_000.0f;
+            right[index] = ((index * 3) % 10_000) / 10_000.0f;
+        }
+    }
+
+    [Benchmark(Baseline = true)]
+    public float[] SeparateMapZipMap()
+    {
+        float[] mapped = Compute.Run(
+            left,
+            value => value * 2.0f,
+            scalarOptions);
+        float[] zipped = Compute.Zip(
+            mapped,
+            right,
+            (first, second) => first + second,
+            scalarOptions);
+        return Compute.Run(
+            zipped,
+            value => ComputeMath.Clamp(value, 0.0f, 1.0f),
+            scalarOptions);
+    }
+
+    [Benchmark]
+    public float[] FusedZipPipeline() =>
+        left
+            .AsCompute(scalarOptions)
+            .Select(value => value * 2.0f)
+            .Zip(right, (first, second) => first + second)
+            .Select(value => ComputeMath.Clamp(value, 0.0f, 1.0f))
+            .ToArray();
+}

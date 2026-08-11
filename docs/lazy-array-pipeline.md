@@ -14,6 +14,17 @@ float[] result = source
     .ToArray();
 ```
 
+One binary `Zip` can be recorded in the same graph:
+
+```csharp
+float[] result = left
+    .AsCompute()
+    .Select(value => value * 2.0f)
+    .Zip(right, (first, second) => first + second)
+    .Select(value => ComputeMath.Clamp(value, 0.0f, 1.0f))
+    .ToArray();
+```
+
 Supported element types are `float`, `double`, and `int`. Pipeline expressions
 have the same restrictions as the corresponding one-shot `Compute.Run` API.
 
@@ -29,13 +40,18 @@ operation makes a GPU execution that needs it fail normally.
 
 ## Lazy graph
 
-Each call to `Select` or `SelectInPlace` adds an immutable node that points to
-the preceding node. Adding a node does not parse, compile, upload, or execute
-anything. Separate branches therefore have independent operation chains.
+Each call to `Select`, `SelectInPlace`, or `Zip` adds immutable graph state.
+Adding a node does not parse, compile, upload, or execute anything. Separate
+branches therefore have independent operation chains.
 
 The source array is referenced rather than copied when the pipeline is built.
 Changes made directly to that array before a terminal call are visible to the
 pipeline.
+
+`Zip` also references its right array and validates equal lengths only at the
+terminal operation. One pipeline can contain one Zip node. A second Zip is
+rejected because the current backend contract supports unary Map and binary
+Zip, not kernels with three or more source arrays.
 
 ## Optimization
 
@@ -59,6 +75,21 @@ and optimizer. This provides:
 - one Scalar, Parallel CPU, or SIMD array pass;
 - one GPU Map kernel, upload, and download;
 - no managed intermediate arrays between fused selectors.
+
+For a binary graph, selectors before Zip are substituted into its left
+parameter and selectors after Zip are substituted into its result:
+
+```text
+Select(x => x * 2)
+Zip(right, (x, y) => x + y)
+Select(x => Clamp(x, 0, 1))
+
+=> (x, y) => Clamp((x * 2) + y, 0, 1)
+```
+
+The combined binary expression executes as one Scalar, Parallel CPU, SIMD, or
+GPU Zip operation. GPU chunking and explicit in-place execution reuse the
+existing Zip backend paths.
 
 Kernel compilation and cache behavior are unchanged. A reusable
 `ComputeContext`, precompilation, GPU chunking, streaming, and the global
@@ -97,7 +128,9 @@ GPU backends apply the expression in the first reduction kernel stage. No
 full-size mapped array is materialized. This applies to `float`, `double`, and
 `int` pipelines, including chunked GPU execution.
 
-Binary `Zip` graph fusion remains a future optimization.
+Reduction after a binary Zip graph currently consumes the fused Zip result as
+a separate operation. Fusing Zip directly into a reduction is the next
+optimization stage.
 
 The allocation and execution-time difference between three independent Map
 calls and one fused pipeline can be measured with:
