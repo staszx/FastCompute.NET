@@ -117,6 +117,17 @@ internal sealed class GpuComputeBackend : IComputeBackend
             reduction,
             context);
 
+    public ComputeBackendExecution<float> ReduceMapped(
+        float[] source,
+        ComputeExpressionPlan plan,
+        ComputeReductionKind reduction,
+        ComputeExecutionContext context)
+        => ResolveContext(context).ExecuteMappedReduction(
+            source,
+            plan,
+            reduction,
+            context);
+
     internal ComputeBackendExecution<int[]> ExecuteHistogram(
         float[] source,
         int binCount,

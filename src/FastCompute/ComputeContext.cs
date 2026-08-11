@@ -222,7 +222,7 @@ public sealed partial class ComputeContext : IDisposable
         ThrowIfDisposed();
         ComputeKernelKind[] floatKinds = Enum.GetValues<ComputeKernelKind>();
         var results = new List<ComputeCompilationResult>(
-            floatKinds.Length + 6);
+            floatKinds.Length + 8);
 
         foreach (ComputeKernelKind kind in floatKinds)
         {
@@ -241,7 +241,8 @@ public sealed partial class ComputeContext : IDisposable
                      {
                          ComputeKernelKind.Map,
                          ComputeKernelKind.Zip,
-                         ComputeKernelKind.Reduction
+                         ComputeKernelKind.Reduction,
+                         ComputeKernelKind.MapReduction
                      })
             {
                 results.Add(PrecompileNumericTemplate(type, kind));
@@ -687,6 +688,148 @@ public sealed partial class ComputeContext : IDisposable
         {
             ReturnLeases(leases);
         }
+    }
+
+    internal ComputeBackendExecution<float> ExecuteMappedReduction(
+        float[] source,
+        ComputeExpressionPlan plan,
+        ComputeReductionKind reduction,
+        ComputeExecutionContext executionContext)
+    {
+        ThrowIfDisposed();
+        executionContext.CancellationToken.ThrowIfCancellationRequested();
+        GpuProgram program = GetOrCreateProgram(plan, out bool programCacheHit);
+        CompiledKernel mapReductionKernel = GetOrCompileKernel(
+            ComputeKernelKind.MapReduction,
+            out KernelCompilation mapCompilation);
+        CompiledKernel reductionKernel = GetOrCompileKernel(
+            ComputeKernelKind.Reduction,
+            out KernelCompilation reductionCompilation);
+        TimeSpan compilationTime =
+            mapCompilation.CompilationTime + reductionCompilation.CompilationTime;
+        bool kernelCacheHit = programCacheHit &&
+            mapCompilation.CacheHit && reductionCompilation.CacheHit;
+
+        if (source.Length == 0)
+        {
+            return new ComputeBackendExecution<float>(
+                0f,
+                compilationTime,
+                TimeSpan.Zero,
+                KernelCacheHit: kernelCacheHit,
+                DeviceName: accelerator.Name);
+        }
+
+        long budgetBytes = GetAutomaticMemoryBudget(
+            executionContext.GpuMemoryBudgetBytes);
+        GpuChunkPlan chunkPlan = GpuChunkPlan.Create(
+            source.Length,
+            fullLengthBufferCount: 2,
+            budgetBytes,
+            executionContext.EnableGpuChunking,
+            executionContext.GpuChunkElementCount);
+        TimeSpan uploadTime = TimeSpan.Zero;
+        TimeSpan executionTime = TimeSpan.Zero;
+        TimeSpan downloadTime = TimeSpan.Zero;
+        float combined = 0f;
+        bool hasCombinedValue = false;
+        var partialResult = new float[1];
+        var leases = new List<GpuFloatMemoryPool.Lease>();
+        using MemoryBuffer1D<GpuInstruction, Stride1D.Dense> programBuffer =
+            accelerator.Allocate1D(program.Instructions);
+        int kernelReduction = reduction == ComputeReductionKind.Average
+            ? (int)ComputeReductionKind.Sum
+            : (int)reduction;
+
+        for (int offset = 0; offset < source.Length;)
+        {
+            executionContext.CancellationToken.ThrowIfCancellationRequested();
+            int count =
+                Math.Min(chunkPlan.ChunkElementCount, source.Length - offset);
+            try
+            {
+                long uploadStarted =
+                    StartTiming(executionContext.CollectDiagnostics);
+                GpuFloatMemoryPool.Lease sourceLease = memoryPool.Rent(count);
+                leases.Add(sourceLease);
+                sourceLease.Buffer.View.CopyFromCPU(
+                    accelerator.DefaultStream,
+                    source.AsSpan(offset, count));
+                accelerator.Synchronize();
+                uploadTime += StopTiming(
+                    uploadStarted,
+                    executionContext.CollectDiagnostics);
+
+                long executionStarted =
+                    StartTiming(executionContext.CollectDiagnostics);
+                int firstPassLength =
+                    (count + GpuKernels.ReductionElementsPerOutput - 1) /
+                    GpuKernels.ReductionElementsPerOutput;
+                GpuFloatMemoryPool.Lease firstPassLease =
+                    memoryPool.Rent(firstPassLength);
+                leases.Add(firstPassLease);
+                mapReductionKernel.MapReduction!(
+                    firstPassLength,
+                    sourceLease.Buffer.View,
+                    firstPassLease.Buffer.View,
+                    count,
+                    programBuffer.View,
+                    program.Instructions.Length,
+                    kernelReduction);
+                MemoryBuffer1D<float, Stride1D.Dense> current =
+                    ExecuteReductionPasses(
+                        firstPassLease.Buffer,
+                        firstPassLength,
+                        reduction,
+                        reductionKernel,
+                        leases);
+                executionTime += StopTiming(
+                    executionStarted,
+                    executionContext.CollectDiagnostics);
+                executionContext.CancellationToken.ThrowIfCancellationRequested();
+
+                long downloadStarted =
+                    StartTiming(executionContext.CollectDiagnostics);
+                current.View.CopyToCPU(
+                    accelerator.DefaultStream,
+                    partialResult.AsSpan());
+                accelerator.Synchronize();
+                downloadTime += StopTiming(
+                    downloadStarted,
+                    executionContext.CollectDiagnostics);
+                combined = CombineReductionPartial(
+                    combined,
+                    partialResult[0],
+                    reduction,
+                    hasCombinedValue);
+                hasCombinedValue = true;
+            }
+            finally
+            {
+                ReturnLeases(leases);
+                leases.Clear();
+            }
+
+            offset += count;
+        }
+
+        if (reduction == ComputeReductionKind.Average)
+        {
+            combined /= source.Length;
+        }
+
+        return new ComputeBackendExecution<float>(
+            combined,
+            compilationTime,
+            executionTime,
+            uploadTime,
+            downloadTime,
+            kernelCacheHit,
+            accelerator.Name,
+            chunkPlan.ChunkCount,
+            chunkPlan.ChunkElementCount,
+            checked((long)source.Length * sizeof(float)),
+            checked((long)chunkPlan.ChunkCount * sizeof(float)));
     }
 
     internal ComputeBackendExecution<int[]> ExecuteHistogram(
@@ -2272,6 +2415,17 @@ public sealed partial class ComputeContext : IDisposable
                     int,
                     int>(GpuKernels.Reduce)
             },
+            ComputeKernelKind.MapReduction => new CompiledKernel
+            {
+                MapReduction = accelerator.LoadAutoGroupedStreamKernel<
+                    Index1D,
+                    ArrayView<float>,
+                    ArrayView<float>,
+                    int,
+                    ArrayView<GpuInstruction>,
+                    int,
+                    int>(GpuKernels.MapReduce)
+            },
             ComputeKernelKind.Histogram => new CompiledKernel
             {
                 Histogram = accelerator.LoadAutoGroupedStreamKernel<
@@ -2355,6 +2509,16 @@ public sealed partial class ComputeContext : IDisposable
             ArrayView<float>,
             int,
             int>? Reduction
+        { get; init; }
+
+        internal Action<
+            Index1D,
+            ArrayView<float>,
+            ArrayView<float>,
+            int,
+            ArrayView<GpuInstruction>,
+            int,
+            int>? MapReduction
         { get; init; }
 
         internal Action<

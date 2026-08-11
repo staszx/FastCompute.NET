@@ -571,6 +571,33 @@ public static partial class Compute
         return execution.Value;
     }
 
+    internal static float ReduceMapped(
+        float[] source,
+        Expression<Func<float, float>> expression,
+        ComputeReductionKind reduction,
+        ComputeOptions? options)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(expression);
+        ComputeOptions effectiveOptions = ValidateOptions(options);
+        effectiveOptions.CancellationToken.ThrowIfCancellationRequested();
+        ComputeExpressionPlan plan = CreatePlan(expression, effectiveOptions);
+        if (source.Length == 0 && reduction != ComputeReductionKind.Sum)
+        {
+            throw new InvalidOperationException(
+                $"Cannot compute {reduction} for an empty array.");
+        }
+
+        BackendResolution resolution =
+            ResolveBackend(effectiveOptions, plan, source.Length);
+        var context = CreateExecutionContext(
+            effectiveOptions,
+            collectDiagnostics: false);
+        return resolution.Backend
+            .ReduceMapped(source, plan, reduction, context)
+            .Value;
+    }
+
     private static float[] RunCore(
         float[] source,
         Expression<Func<float, float>> expression,

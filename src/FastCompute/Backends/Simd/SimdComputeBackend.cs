@@ -241,6 +241,149 @@ internal sealed class SimdComputeBackend : IComputeBackend
             StopTiming(executionStarted, context.CollectDiagnostics));
     }
 
+    public ComputeBackendExecution<float> ReduceMapped(
+        float[] source,
+        ComputeExpressionPlan plan,
+        ComputeReductionKind reduction,
+        ComputeExecutionContext context)
+    {
+        long compilationStarted = StartTiming(context.CollectDiagnostics);
+        Func<Vector256<float>, Vector256<float>> vectorOperation =
+            SimdExpressionCompiler.CompileUnary(plan);
+        Func<float, float> scalarOperation =
+            CpuExpressionCompiler.CompileUnary(plan);
+        TimeSpan compilationTime =
+            StopTiming(compilationStarted, context.CollectDiagnostics);
+        int vectorizedLength =
+            source.Length - source.Length % Vector256<float>.Count;
+        ref float sourceReference =
+            ref MemoryMarshal.GetArrayDataReference(source);
+        ComputeReductionKind effectiveReduction =
+            reduction == ComputeReductionKind.Average
+                ? ComputeReductionKind.Sum
+                : reduction;
+
+        long executionStarted = StartTiming(context.CollectDiagnostics);
+        float result = effectiveReduction == ComputeReductionKind.Sum
+            ? SumMapped(
+                source,
+                vectorizedLength,
+                ref sourceReference,
+                vectorOperation,
+                scalarOperation,
+                context.CancellationToken)
+            : ExtremumMapped(
+                source,
+                vectorizedLength,
+                ref sourceReference,
+                vectorOperation,
+                scalarOperation,
+                context.CancellationToken,
+                effectiveReduction);
+        if (reduction == ComputeReductionKind.Average)
+        {
+            result /= source.Length;
+        }
+
+        return new ComputeBackendExecution<float>(
+            result,
+            compilationTime,
+            StopTiming(executionStarted, context.CollectDiagnostics));
+    }
+
+    private static float SumMapped(
+        float[] source,
+        int vectorizedLength,
+        ref float sourceReference,
+        Func<Vector256<float>, Vector256<float>> vectorOperation,
+        Func<float, float> scalarOperation,
+        CancellationToken cancellationToken)
+    {
+        Vector256<float> accumulator = Vector256<float>.Zero;
+        for (int offset = 0;
+             offset < vectorizedLength;
+             offset += Vector256<float>.Count)
+        {
+            CheckCancellation(offset, cancellationToken);
+            Vector256<float> sourceVector =
+                Vector256.LoadUnsafe(ref sourceReference, (nuint)offset);
+            accumulator = Avx.Add(accumulator, vectorOperation(sourceVector));
+        }
+
+        float result = 0f;
+        for (int lane = 0; lane < Vector256<float>.Count; lane++)
+        {
+            result += accumulator.GetElement(lane);
+        }
+
+        for (int index = vectorizedLength; index < source.Length; index++)
+        {
+            CheckCancellation(index, cancellationToken);
+            result += scalarOperation(source[index]);
+        }
+
+        return result;
+    }
+
+    private static float ExtremumMapped(
+        float[] source,
+        int vectorizedLength,
+        ref float sourceReference,
+        Func<Vector256<float>, Vector256<float>> vectorOperation,
+        Func<float, float> scalarOperation,
+        CancellationToken cancellationToken,
+        ComputeReductionKind reduction)
+    {
+        if (vectorizedLength == 0)
+        {
+            float scalarResult = scalarOperation(source[0]);
+            for (int index = 1; index < source.Length; index++)
+            {
+                CheckCancellation(index, cancellationToken);
+                scalarResult = ApplyScalarExtremum(
+                    reduction,
+                    scalarResult,
+                    scalarOperation(source[index]));
+            }
+
+            return scalarResult;
+        }
+
+        Vector256<float> accumulator = vectorOperation(
+            Vector256.LoadUnsafe(ref sourceReference));
+        for (int offset = Vector256<float>.Count;
+             offset < vectorizedLength;
+             offset += Vector256<float>.Count)
+        {
+            CheckCancellation(offset, cancellationToken);
+            Vector256<float> value = vectorOperation(
+                Vector256.LoadUnsafe(ref sourceReference, (nuint)offset));
+            accumulator = reduction == ComputeReductionKind.Min
+                ? SimdVectorOperations.Minimum(accumulator, value)
+                : SimdVectorOperations.Maximum(accumulator, value);
+        }
+
+        float result = accumulator.GetElement(0);
+        for (int lane = 1; lane < Vector256<float>.Count; lane++)
+        {
+            result = ApplyScalarExtremum(
+                reduction,
+                result,
+                accumulator.GetElement(lane));
+        }
+
+        for (int index = vectorizedLength; index < source.Length; index++)
+        {
+            CheckCancellation(index, cancellationToken);
+            result = ApplyScalarExtremum(
+                reduction,
+                result,
+                scalarOperation(source[index]));
+        }
+
+        return result;
+    }
+
     private static float Sum(
         float[] source,
         int vectorizedLength,

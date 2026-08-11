@@ -84,6 +84,64 @@ public static partial class Compute
         where T : unmanaged, INumber<T> =>
         ReduceNumeric(source, ComputeReductionKind.Average, options);
 
+    internal static T ReduceMapped<T>(
+        T[] source,
+        Expression<Func<T, T>> expression,
+        ComputeReductionKind reduction,
+        ComputeOptions? options)
+        where T : unmanaged, INumber<T>
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(expression);
+        ValidateNumericType<T>();
+        ComputeOptions effective = ValidateOptions(options);
+        effective.CancellationToken.ThrowIfCancellationRequested();
+        NumericExpressionProgram<T> program =
+            NumericExpressionParser.Parse<T>(expression);
+        if (source.Length == 0)
+        {
+            if (reduction == ComputeReductionKind.Sum)
+            {
+                return T.Zero;
+            }
+
+            throw new InvalidOperationException(
+                $"{reduction} is not defined for an empty array.");
+        }
+
+        ComputeBackendKind backend = ResolveNumericBackend(
+            effective,
+            program,
+            source.Length);
+        return backend switch
+        {
+            ComputeBackendKind.Scalar => NumericCpuExecutor.ReduceMappedScalar(
+                source,
+                program,
+                reduction,
+                effective.CancellationToken),
+            ComputeBackendKind.ParallelCpu =>
+                NumericCpuExecutor.ReduceMappedParallel(
+                    source,
+                    program,
+                    reduction,
+                    effective),
+            ComputeBackendKind.Simd => NumericSimdExecutor.ReduceMapped(
+                source,
+                program,
+                reduction,
+                effective.CancellationToken),
+            ComputeBackendKind.Gpu => ResolveNumericGpuContext(effective)
+                .ExecuteNumericMappedReduction(
+                    source,
+                    program,
+                    reduction,
+                    effective),
+            _ => throw new InvalidOperationException(
+                $"Unexpected numeric backend '{backend}'.")
+        };
+    }
+
     private static T[] RunNumeric<T>(
         T[] source,
         Expression<Func<T, T>> expression,

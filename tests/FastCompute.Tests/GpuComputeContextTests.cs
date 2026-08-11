@@ -128,7 +128,7 @@ public sealed class GpuComputeContextTests
 
         Assert.Multiple(() =>
         {
-            Assert.That(first, Has.Count.EqualTo(10));
+            Assert.That(first, Has.Count.EqualTo(13));
             Assert.That(first, Has.All.Property(nameof(ComputeCompilationResult.CacheHit)).False);
             Assert.That(second, Has.All.Property(nameof(ComputeCompilationResult.CacheHit)).True);
         });

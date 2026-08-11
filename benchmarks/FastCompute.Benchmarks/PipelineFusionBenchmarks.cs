@@ -53,3 +53,47 @@ public class PipelineFusionBenchmarks
             .Select(value => ComputeMath.Clamp(value, 0.0f, 1.0f))
             .ToArray();
 }
+
+[MemoryDiagnoser]
+[SimpleJob(RuntimeMoniker.Net80, warmupCount: 3, iterationCount: 6)]
+public class PipelineReductionFusionBenchmarks
+{
+    private readonly ComputeOptions scalarOptions =
+        new()
+        {
+            Backend = ComputeBackendKind.Scalar
+        };
+    private float[] source = null!;
+
+    [Params(1_000_000)]
+    public int Count { get; set; }
+
+    [GlobalSetup]
+    public void Setup()
+    {
+        source = new float[Count];
+        for (int index = 0; index < source.Length; index++)
+        {
+            source[index] = (index % 10_000) / 10_000.0f;
+        }
+    }
+
+    [Benchmark(Baseline = true)]
+    public float MaterializedMapThenSum()
+    {
+        float[] mapped = Compute.Run(
+            source,
+            value => ComputeMath.Clamp(value * 2.0f + 1.0f, 0.0f, 2.0f),
+            scalarOptions);
+        return Compute.Sum(mapped, scalarOptions);
+    }
+
+    [Benchmark]
+    public float FusedMapReduction() =>
+        source
+            .AsCompute(scalarOptions)
+            .Select(value => value * 2.0f)
+            .Select(value => value + 1.0f)
+            .Select(value => ComputeMath.Clamp(value, 0.0f, 2.0f))
+            .Sum();
+}

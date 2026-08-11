@@ -188,6 +188,57 @@ internal sealed class ScalarComputeBackend : IComputeBackend
             StopTiming(executionStarted, context.CollectDiagnostics));
     }
 
+    public ComputeBackendExecution<float> ReduceMapped(
+        float[] source,
+        ComputeExpressionPlan plan,
+        ComputeReductionKind reduction,
+        ComputeExecutionContext context)
+    {
+        long compilationStarted = StartTiming(context.CollectDiagnostics);
+        Func<float, float> operation = CpuExpressionCompiler.CompileUnary(plan);
+        TimeSpan compilationTime =
+            StopTiming(compilationStarted, context.CollectDiagnostics);
+        long executionStarted = StartTiming(context.CollectDiagnostics);
+        float result = ReduceMappedCore(
+            source,
+            operation,
+            reduction,
+            context.CancellationToken);
+        return new ComputeBackendExecution<float>(
+            result,
+            compilationTime,
+            StopTiming(executionStarted, context.CollectDiagnostics));
+    }
+
+    private static float ReduceMappedCore(
+        float[] source,
+        Func<float, float> operation,
+        ComputeReductionKind reduction,
+        CancellationToken cancellationToken)
+    {
+        bool isSum = reduction is ComputeReductionKind.Sum or
+            ComputeReductionKind.Average;
+        float result = isSum ? 0f : operation(source[0]);
+        int firstIndex = isSum ? 0 : 1;
+        for (int index = firstIndex; index < source.Length; index++)
+        {
+            CheckCancellation(index, cancellationToken);
+            float value = operation(source[index]);
+            result = reduction switch
+            {
+                ComputeReductionKind.Sum or ComputeReductionKind.Average =>
+                    result + value,
+                ComputeReductionKind.Min => GpuMath.Min(result, value),
+                ComputeReductionKind.Max => GpuMath.Max(result, value),
+                _ => throw new ArgumentOutOfRangeException(nameof(reduction))
+            };
+        }
+
+        return reduction == ComputeReductionKind.Average
+            ? result / source.Length
+            : result;
+    }
+
     private static float Sum(float[] source, CancellationToken cancellationToken)
     {
         float result = 0f;

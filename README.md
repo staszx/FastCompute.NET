@@ -133,6 +133,11 @@ constant folding and IEEE-safe simplification. The resulting expression is
 executed as one Map operation, which means one Parallel/SIMD pass or one GPU
 Map kernel instead of one pass per `Select`.
 
+Reduction terminals are fused as well. A selector chain followed by `Sum`,
+`Min`, `Max`, or `Average` transforms values while reducing them, without
+materializing a full-size mapped array. GPU execution applies the selector
+expression in the first reduction kernel stage, including chunked execution.
+
 Pipelines can be configured in three ways:
 
 ```csharp

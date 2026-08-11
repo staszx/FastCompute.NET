@@ -90,10 +90,14 @@ With no selectors, `ToArray` returns a copy and `ToArrayInPlace` returns the
 unchanged source reference. Reductions without selectors run directly on the
 source.
 
-Unary selectors are fused into one Map. A reduction following selectors
-currently consumes the optimized Map result as a separate operation.
-Map-reduction kernel fusion and binary `Zip` graph fusion remain future
-optimizations.
+Unary selectors are fused into one Map. When `Sum`, `Min`, `Max`, or `Average`
+follows one or more selectors, the optimized Map expression is fused into the
+reduction. CPU and SIMD backends transform values while accumulating them, and
+GPU backends apply the expression in the first reduction kernel stage. No
+full-size mapped array is materialized. This applies to `float`, `double`, and
+`int` pipelines, including chunked GPU execution.
+
+Binary `Zip` graph fusion remains a future optimization.
 
 The allocation and execution-time difference between three independent Map
 calls and one fused pipeline can be measured with:

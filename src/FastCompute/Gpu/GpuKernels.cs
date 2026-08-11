@@ -86,6 +86,55 @@ public static class GpuKernels
         destination[outputIndex] = result;
     }
 
+    /// <summary>
+    /// Applies a unary expression and executes the first reduction stage
+    /// without materializing the mapped array.
+    /// </summary>
+    public static void MapReduce(
+        Index1D outputIndex,
+        ArrayView<float> source,
+        ArrayView<float> destination,
+        int sourceLength,
+        ArrayView<GpuInstruction> program,
+        int instructionCount,
+        int reduction)
+    {
+        int start = outputIndex * ReductionElementsPerOutput;
+        int end = XMath.Min(start + ReductionElementsPerOutput, sourceLength);
+        bool isSum = reduction == (int)ComputeReductionKind.Sum;
+        float result = isSum
+            ? 0f
+            : Evaluate(source[start], 0f, program, instructionCount);
+        int firstIndex = isSum ? start : start + 1;
+
+        for (int index = firstIndex; index < end; index++)
+        {
+            float value = Evaluate(
+                source[index],
+                0f,
+                program,
+                instructionCount);
+            if (isSum)
+            {
+                result += value;
+            }
+            else if (XMath.IsNaN(result) || XMath.IsNaN(value))
+            {
+                result += value;
+            }
+            else if (reduction == (int)ComputeReductionKind.Min)
+            {
+                result = XMath.Min(result, value);
+            }
+            else
+            {
+                result = XMath.Max(result, value);
+            }
+        }
+
+        destination[outputIndex] = result;
+    }
+
     /// <summary>Executes the internal Histogram accumulation kernel.</summary>
     public static void Histogram(
         Index1D index,
@@ -208,6 +257,49 @@ public static class GpuKernels
         destination[outputIndex] = result;
     }
 
+    /// <summary>Applies a double Map and executes its first reduction stage.</summary>
+    public static void MapReduceDouble(
+        Index1D outputIndex,
+        ArrayView<double> source,
+        ArrayView<double> destination,
+        int sourceLength,
+        ArrayView<DoubleGpuInstruction> program,
+        int instructionCount,
+        int reduction)
+    {
+        int start = outputIndex * ReductionElementsPerOutput;
+        int end = XMath.Min(start + ReductionElementsPerOutput, sourceLength);
+        bool isSum = reduction == (int)ComputeReductionKind.Sum;
+        double result = isSum
+            ? 0d
+            : EvaluateDouble(
+                source[start], 0d, program, instructionCount);
+        int firstIndex = isSum ? start : start + 1;
+        for (int index = firstIndex; index < end; index++)
+        {
+            double value = EvaluateDouble(
+                source[index], 0d, program, instructionCount);
+            if (isSum)
+            {
+                result += value;
+            }
+            else if (XMath.IsNaN(result) || XMath.IsNaN(value))
+            {
+                result += value;
+            }
+            else if (reduction == (int)ComputeReductionKind.Min)
+            {
+                result = XMath.Min(result, value);
+            }
+            else
+            {
+                result = XMath.Max(result, value);
+            }
+        }
+
+        destination[outputIndex] = result;
+    }
+
     /// <summary>Executes the internal integer unary Map kernel.</summary>
     public static void MapInt(
         Index1D index,
@@ -259,6 +351,44 @@ public static class GpuKernels
         {
             int value = source[index];
             if (reduction == (int)ComputeReductionKind.Sum)
+            {
+                result += value;
+            }
+            else if (reduction == (int)ComputeReductionKind.Min)
+            {
+                result = XMath.Min(result, value);
+            }
+            else
+            {
+                result = XMath.Max(result, value);
+            }
+        }
+
+        destination[outputIndex] = result;
+    }
+
+    /// <summary>Applies an integer Map and executes its first reduction stage.</summary>
+    public static void MapReduceInt(
+        Index1D outputIndex,
+        ArrayView<int> source,
+        ArrayView<int> destination,
+        int sourceLength,
+        ArrayView<IntGpuInstruction> program,
+        int instructionCount,
+        int reduction)
+    {
+        int start = outputIndex * ReductionElementsPerOutput;
+        int end = XMath.Min(start + ReductionElementsPerOutput, sourceLength);
+        bool isSum = reduction == (int)ComputeReductionKind.Sum;
+        int result = isSum
+            ? 0
+            : EvaluateInt(source[start], 0, program, instructionCount);
+        int firstIndex = isSum ? start : start + 1;
+        for (int index = firstIndex; index < end; index++)
+        {
+            int value = EvaluateInt(
+                source[index], 0, program, instructionCount);
+            if (isSum)
             {
                 result += value;
             }

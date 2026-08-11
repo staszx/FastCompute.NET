@@ -145,27 +145,40 @@ public sealed class ComputePipeline<T>
 
     private T Reduce(ComputeReductionKind reduction)
     {
-        T[] input = tail is null ? source : ToArray();
+        Expression<Func<T, T>>? expression =
+            ComputePipelineOptimizer.Optimize(tail);
         if (typeof(T) == typeof(float))
         {
-            var floatInput = (float[])(object)input;
-            float result = reduction switch
-            {
-                ComputeReductionKind.Sum =>
-                    Compute.Sum(floatInput, options),
-                ComputeReductionKind.Min =>
-                    Compute.Min(floatInput, options),
-                ComputeReductionKind.Max =>
-                    Compute.Max(floatInput, options),
-                ComputeReductionKind.Average =>
-                    Compute.Average(floatInput, options),
-                _ => throw new ArgumentOutOfRangeException(
-                    nameof(reduction))
-            };
+            var floatSource = (float[])(object)source;
+            float result = expression is null
+                ? ReduceFloat(floatSource, reduction)
+                : Compute.ReduceMapped(
+                    floatSource,
+                    (Expression<Func<float, float>>)(object)expression,
+                    reduction,
+                    options);
             return (T)(object)result;
         }
 
-        return reduction switch
+        return expression is null
+            ? ReduceNumeric(source, reduction)
+            : Compute.ReduceMapped(source, expression, reduction, options);
+    }
+
+    private float ReduceFloat(
+        float[] input,
+        ComputeReductionKind reduction) => reduction switch
+    {
+        ComputeReductionKind.Sum => Compute.Sum(input, options),
+        ComputeReductionKind.Min => Compute.Min(input, options),
+        ComputeReductionKind.Max => Compute.Max(input, options),
+        ComputeReductionKind.Average => Compute.Average(input, options),
+        _ => throw new ArgumentOutOfRangeException(nameof(reduction))
+    };
+
+    private T ReduceNumeric(
+        T[] input,
+        ComputeReductionKind reduction) => reduction switch
         {
             ComputeReductionKind.Sum =>
                 Compute.Sum(input, options),
@@ -177,7 +190,6 @@ public sealed class ComputePipeline<T>
                 Compute.Average(input, options),
             _ => throw new ArgumentOutOfRangeException(nameof(reduction))
         };
-    }
 }
 
 internal sealed class ComputePipelineNode<T>

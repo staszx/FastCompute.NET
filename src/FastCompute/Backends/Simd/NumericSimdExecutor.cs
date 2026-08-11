@@ -172,6 +172,78 @@ internal static class NumericSimdExecutor
             : result;
     }
 
+    internal static T ReduceMapped<T>(
+        T[] source,
+        NumericExpressionProgram<T> program,
+        ComputeReductionKind reduction,
+        CancellationToken cancellationToken)
+        where T : unmanaged, INumber<T>
+    {
+        EnsureSupported(program);
+        if (source.Length < Vector<T>.Count)
+        {
+            return NumericCpuExecutor.ReduceMappedScalar(
+                source,
+                program,
+                reduction,
+                cancellationToken);
+        }
+
+        int vectorizedLength =
+            source.Length - source.Length % Vector<T>.Count;
+        bool isSum = reduction is ComputeReductionKind.Sum or
+            ComputeReductionKind.Average;
+        var stack = new Vector<T>[program.MaximumStackDepth];
+        Vector<T> accumulator = isSum
+            ? Vector<T>.Zero
+            : Evaluate(
+                new Vector<T>(source, 0),
+                Vector<T>.Zero,
+                program,
+                stack);
+        int offset = isSum ? 0 : Vector<T>.Count;
+        for (; offset < vectorizedLength; offset += Vector<T>.Count)
+        {
+            CheckCancellation(offset, cancellationToken);
+            Vector<T> value = Evaluate(
+                new Vector<T>(source, offset),
+                Vector<T>.Zero,
+                program,
+                stack);
+            accumulator = reduction switch
+            {
+                ComputeReductionKind.Sum or ComputeReductionKind.Average =>
+                    Vector.Add(accumulator, value),
+                ComputeReductionKind.Min => Vector.Min(accumulator, value),
+                ComputeReductionKind.Max => Vector.Max(accumulator, value),
+                _ => throw new ArgumentOutOfRangeException(nameof(reduction))
+            };
+        }
+
+        T result = isSum ? T.Zero : accumulator[0];
+        int firstLane = isSum ? 0 : 1;
+        for (int lane = firstLane; lane < Vector<T>.Count; lane++)
+        {
+            result = ApplyReduction(reduction, result, accumulator[lane]);
+        }
+
+        for (int index = vectorizedLength; index < source.Length; index++)
+        {
+            CheckCancellation(index, cancellationToken);
+            result = ApplyReduction(
+                reduction,
+                result,
+                NumericCpuExecutor.Evaluate(
+                    source[index],
+                    T.Zero,
+                    program));
+        }
+
+        return reduction == ComputeReductionKind.Average
+            ? result / T.CreateChecked(source.Length)
+            : result;
+    }
+
     private static Vector<T> Evaluate<T>(
         Vector<T> parameter0,
         Vector<T> parameter1,

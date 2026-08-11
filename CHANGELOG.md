@@ -2,6 +2,16 @@
 
 All notable changes to FastCompute.NET are documented in this file.
 
+## Unreleased
+
+### Changed
+
+- Lazy selector chains followed by `Sum`, `Min`, `Max`, or `Average` now fuse
+  Map evaluation into the reduction for Scalar, Parallel CPU, SIMD, and GPU
+  backends without materializing an intermediate mapped array.
+- Map-reduction fusion supports `float`, `double`, and `int`, including chunked
+  GPU execution.
+
 ## 0.7.0 - 2026-07-30
 
 Backend-neutral math API release.

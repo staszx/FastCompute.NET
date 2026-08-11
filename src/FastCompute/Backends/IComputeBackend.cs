@@ -25,4 +25,10 @@ internal interface IComputeBackend
         float[] source,
         ComputeReductionKind reduction,
         ComputeExecutionContext context);
+
+    ComputeBackendExecution<float> ReduceMapped(
+        float[] source,
+        ComputeExpressionPlan plan,
+        ComputeReductionKind reduction,
+        ComputeExecutionContext context);
 }
