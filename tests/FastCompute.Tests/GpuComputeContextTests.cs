@@ -128,7 +128,8 @@ public sealed class GpuComputeContextTests
 
         Assert.Multiple(() =>
         {
-            Assert.That(first, Has.Count.EqualTo(28));
+            Assert.That(first, Has.Count.EqualTo(22),
+                "Core precompilation must contain only numeric, byte-composite, and Fourier templates; image kernels belong to FastCompute.ImageProcessing.");
             Assert.That(first, Has.All.Property(nameof(ComputeCompilationResult.CacheHit)).False);
             Assert.That(second, Has.All.Property(nameof(ComputeCompilationResult.CacheHit)).True);
         });

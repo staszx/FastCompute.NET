@@ -144,6 +144,102 @@ public static class ImageGpuKernels
         destination[index] = sum / count;
     }
 
+    /// <summary>Resizes one row-major floating-point buffer using bilinear interpolation.</summary>
+    public static void ResizeBilinear(Index1D index, ArrayView<float> source, ArrayView<float> destination, int sourceWidth, int sourceHeight, int destinationWidth, int destinationHeight)
+    {
+        int destinationX = index % destinationWidth;
+        int destinationY = index / destinationWidth;
+        float sourceX = destinationWidth == 1 ? 0f : destinationX * (sourceWidth - 1f) / (destinationWidth - 1f);
+        float sourceY = destinationHeight == 1 ? 0f : destinationY * (sourceHeight - 1f) / (destinationHeight - 1f);
+        int x0 = (int)XMath.Floor(sourceX);
+        int y0 = (int)XMath.Floor(sourceY);
+        int x1 = XMath.Min(sourceWidth - 1, x0 + 1);
+        int y1 = XMath.Min(sourceHeight - 1, y0 + 1);
+        float horizontal = sourceX - x0;
+        float vertical = sourceY - y0;
+        float top = source[(y0 * sourceWidth) + x0] + ((source[(y0 * sourceWidth) + x1] - source[(y0 * sourceWidth) + x0]) * horizontal);
+        float bottom = source[(y1 * sourceWidth) + x0] + ((source[(y1 * sourceWidth) + x1] - source[(y1 * sourceWidth) + x0]) * horizontal);
+        destination[index] = top + ((bottom - top) * vertical);
+    }
+
+    /// <summary>Calculates local range contrast in a square neighbourhood.</summary>
+    public static void LocalContrast(Index1D index, ArrayView<float> source, ArrayView<float> destination, int width, int height, int radius)
+    {
+        int x = index % width;
+        int y = index / width;
+        float minimum = float.MaxValue;
+        float maximum = float.MinValue;
+        int startY = XMath.Max(0, y - radius);
+        int endY = XMath.Min(height - 1, y + radius);
+        int startX = XMath.Max(0, x - radius);
+        int endX = XMath.Min(width - 1, x + radius);
+        for (int currentY = startY; currentY <= endY; currentY++)
+        for (int currentX = startX; currentX <= endX; currentX++)
+        {
+            float value = source[(currentY * width) + currentX];
+            minimum = XMath.Min(minimum, value);
+            maximum = XMath.Max(maximum, value);
+        }
+        destination[index] = maximum - minimum;
+    }
+
+    /// <summary>Accumulates a radial power-spectrum bin and one of three frequency bands.</summary>
+    public static void AccumulateRadialSpectrum(
+        Index1D index,
+        ArrayView<float> power,
+        ArrayView<float> radialSums,
+        ArrayView<int> radialCounts,
+        ArrayView<float> bandSums,
+        int width,
+        int height,
+        int binCount,
+        float lowBoundary,
+        float middleBoundary)
+    {
+        int x = index % width;
+        int y = index / width;
+        int frequencyX = x <= width / 2 ? x : x - width;
+        int frequencyY = y <= height / 2 ? y : y - height;
+        float maximum = XMath.Sqrt(((width / 2f) * (width / 2f)) + ((height / 2f) * (height / 2f)));
+        float normalizedRadius = XMath.Sqrt((frequencyX * frequencyX) + (frequencyY * frequencyY)) / maximum;
+        int bin = XMath.Min(binCount - 1, (int)(normalizedRadius * binCount));
+        float value = power[index];
+        Atomic.Add(ref radialSums[bin], value);
+        Atomic.Add(ref radialCounts[bin], 1);
+        int band = normalizedRadius < lowBoundary ? 0 : normalizedRadius < middleBoundary ? 1 : 2;
+        Atomic.Add(ref bandSums[band], value);
+    }
+
+    /// <summary>Calculates local Shannon entropy over normalized grayscale values.</summary>
+    public static void LocalEntropy(Index1D index, ArrayView<float> source, ArrayView<float> destination, int width, int height, int radius, int binCount)
+    {
+        int x = index % width;
+        int y = index / width;
+        int startX = XMath.Max(0, x - radius);
+        int endX = XMath.Min(width - 1, x + radius);
+        int startY = XMath.Max(0, y - radius);
+        int endY = XMath.Min(height - 1, y + radius);
+        int count = (endX - startX + 1) * (endY - startY + 1);
+        float entropy = 0f;
+        for (int bin = 0; bin < binCount; bin++)
+        {
+            int binSamples = 0;
+            for (int currentY = startY; currentY <= endY; currentY++)
+            for (int currentX = startX; currentX <= endX; currentX++)
+            {
+                float value = XMath.Clamp(source[(currentY * width) + currentX], 0f, 1f);
+                int valueBin = XMath.Min(binCount - 1, (int)(value * binCount));
+                if (valueBin == bin) binSamples++;
+            }
+            if (binSamples > 0)
+            {
+                float probability = binSamples / (float)count;
+                entropy -= probability * XMath.Log2(probability);
+            }
+        }
+        destination[index] = entropy;
+    }
+
     private static void ReadByte(ArrayView<byte> source, int index, int components, out float red, out float green, out float blue)
     {
         int offset = index * components;

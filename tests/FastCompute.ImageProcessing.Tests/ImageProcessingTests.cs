@@ -53,10 +53,11 @@ public sealed class ImageProcessingTests
         var rgb24 = new Rgb24[rgb.Length];
         var roundTrip = new Rgb[rgb.Length];
 
-        PixelConverter.Convert<Rgb, GrayF32>(rgb, grayF32);
-        PixelConverter.Convert<Rgb, Gray8>(rgb, gray8);
-        PixelConverter.Convert<Rgb, Rgb24>(rgb, rgb24);
-        PixelConverter.Convert<Rgb24, Rgb>(rgb24, roundTrip);
+        var simd = new ComputeOptions { Backend = ComputeBackendKind.Simd };
+        PixelConverter.Convert<Rgb, GrayF32>(rgb, grayF32, options: simd);
+        PixelConverter.Convert<Rgb, Gray8>(rgb, gray8, options: simd);
+        PixelConverter.Convert<Rgb, Rgb24>(rgb, rgb24, options: simd);
+        PixelConverter.Convert<Rgb24, Rgb>(rgb24, roundTrip, options: simd);
 
         for (int i = 0; i < rgb.Length; i++)
         {
@@ -86,12 +87,13 @@ public sealed class ImageProcessingTests
         var directRgb24 = new Rgb24[gray8.Length];
         var roundTrip = new Gray8[gray8.Length];
 
-        PixelConverter.Convert<Gray8, GrayF32>(gray8, grayF32);
-        PixelConverter.Convert<GrayF32, Rgb>(grayF32, rgb);
-        PixelConverter.Convert<GrayF32, Rgb24>(grayF32, rgb24);
-        PixelConverter.Convert<Gray8, Rgb>(gray8, directRgb);
-        PixelConverter.Convert<Gray8, Rgb24>(gray8, directRgb24);
-        PixelConverter.Convert<GrayF32, Gray8>(grayF32, roundTrip);
+        var simd = new ComputeOptions { Backend = ComputeBackendKind.Simd };
+        PixelConverter.Convert<Gray8, GrayF32>(gray8, grayF32, options: simd);
+        PixelConverter.Convert<GrayF32, Rgb>(grayF32, rgb, options: simd);
+        PixelConverter.Convert<GrayF32, Rgb24>(grayF32, rgb24, options: simd);
+        PixelConverter.Convert<Gray8, Rgb>(gray8, directRgb, options: simd);
+        PixelConverter.Convert<Gray8, Rgb24>(gray8, directRgb24, options: simd);
+        PixelConverter.Convert<GrayF32, Gray8>(grayF32, roundTrip, options: simd);
 
         for (int i = 0; i < gray8.Length; i++)
         {
@@ -112,6 +114,34 @@ public sealed class ImageProcessingTests
                 Assert.That(roundTrip[i].Value, Is.EqualTo(gray8[i].Value));
             });
         }
+    }
+
+    [TestCase(ComputeBackendKind.Scalar)]
+    [TestCase(ComputeBackendKind.ParallelCpu)]
+    [TestCase(ComputeBackendKind.Simd)]
+    [TestCase(ComputeBackendKind.Gpu)]
+    public void PixelConverter_AllBackendsMatchScalar(ComputeBackendKind backend)
+    {
+        Rgb24[] source = Enumerable.Range(0, 4099)
+            .Select(index => new Rgb24(
+                (byte)(index * 17),
+                (byte)(index * 29 + 3),
+                (byte)(index * 43 + 7)))
+            .ToArray();
+        var expected = new GrayF32[source.Length];
+        var actual = new GrayF32[source.Length];
+
+        PixelConverter.Convert<Rgb24, GrayF32>(
+            source,
+            expected,
+            options: new ComputeOptions { Backend = ComputeBackendKind.Scalar });
+        PixelConverter.Convert<Rgb24, GrayF32>(
+            source,
+            actual,
+            options: new ComputeOptions { Backend = backend });
+
+        for (int index = 0; index < expected.Length; index++)
+            Assert.That(actual[index].Value, Is.EqualTo(expected[index].Value).Within(2e-6f));
     }
 
     [Test]
@@ -354,6 +384,162 @@ public sealed class ImageProcessingTests
         GrayImageOperations.Subtract(left, rightAndDestination, rightAndDestination);
 
         Assert.That(rightAndDestination, Is.EqualTo(Enumerable.Range(0, length).Select(i => i * 0.15f)).Within(1e-5f));
+    }
+
+    [TestCase(ComputeBackendKind.Scalar)]
+    [TestCase(ComputeBackendKind.ParallelCpu)]
+    [TestCase(ComputeBackendKind.Simd)]
+    [TestCase(ComputeBackendKind.Gpu)]
+    public void ImageFilters_GradientsLaplacianAndEdgeMapHaveBackendParity(ComputeBackendKind backend)
+    {
+        const int width = 13;
+        const int height = 9;
+        float[] source = Enumerable.Range(0, width * height)
+            .Select(index => (index * 23 % 71) / 70f)
+            .ToArray();
+        var scalar = new ComputeOptions { Backend = ComputeBackendKind.Scalar };
+        var actualOptions = new ComputeOptions { Backend = backend };
+
+        float[] expectedGradient = ImageFilters.GradientMagnitude(source, width, height, scalar);
+        float[] expectedLaplacian = ImageFilters.Laplacian(source, width, height, scalar);
+        float[] expectedEdges = ImageFilters.EdgeMap(source, width, height, 0.08f, scalar);
+        float[] expectedContrast = ImageSpatialOperations.LocalContrast(source, width, height, options: scalar);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(ImageFilters.GradientMagnitude(source, width, height, actualOptions), Is.EqualTo(expectedGradient).Within(4e-6f));
+            Assert.That(ImageFilters.Laplacian(source, width, height, actualOptions), Is.EqualTo(expectedLaplacian).Within(4e-6f));
+            Assert.That(ImageFilters.EdgeMap(source, width, height, 0.08f, actualOptions), Is.EqualTo(expectedEdges));
+            Assert.That(ImageSpatialOperations.LocalContrast(source, width, height, options: actualOptions), Is.EqualTo(expectedContrast).Within(2e-6f));
+        });
+    }
+
+    [TestCase(ComputeBackendKind.Scalar)]
+    [TestCase(ComputeBackendKind.ParallelCpu)]
+    [TestCase(ComputeBackendKind.Simd)]
+    [TestCase(ComputeBackendKind.Gpu)]
+    public void ImageSpectrumOperations_HaveBackendParity(ComputeBackendKind backend)
+    {
+        const int width = 16;
+        const int height = 8;
+        float[] power = Enumerable.Range(0, width * height)
+            .Select(index => ((index * 37) % 97) / 96f)
+            .ToArray();
+        var scalarOptions = new ComputeOptions { Backend = ComputeBackendKind.Scalar };
+        var options = new ComputeOptions { Backend = backend };
+        float[] expected = ImageSpectrumOperations.CalculateRadialSpectrum(power, width, height, 12, out FrequencyBandEnergy expectedBands, options: scalarOptions);
+
+        float[] actual = ImageSpectrumOperations.CalculateRadialSpectrum(power, width, height, 12, out FrequencyBandEnergy actualBands, options: options);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(actual, Is.EqualTo(expected).Within(2e-5f));
+            Assert.That(actualBands.Low, Is.EqualTo(expectedBands.Low).Within(2e-4));
+            Assert.That(actualBands.Mid, Is.EqualTo(expectedBands.Mid).Within(2e-4));
+            Assert.That(actualBands.High, Is.EqualTo(expectedBands.High).Within(2e-4));
+        });
+    }
+
+    [TestCase(ComputeBackendKind.Scalar)]
+    [TestCase(ComputeBackendKind.ParallelCpu)]
+    [TestCase(ComputeBackendKind.Simd)]
+    [TestCase(ComputeBackendKind.Gpu)]
+    public void BayerDemosaicAndNoise_HaveBackendParity(ComputeBackendKind backend)
+    {
+        const int width = 12;
+        const int height = 8;
+        Rgb[] pixels = Enumerable.Range(0, width * height)
+            .Select(index => new Rgb((index * 13 % 89) / 88f, (index * 29 % 97) / 96f, (index * 43 % 101) / 100f))
+            .ToArray();
+        Image<Rgb> image = Image<Rgb>.Load(pixels, width, height, ColorEncoding.Linear);
+        var scalar = new ComputeOptions { Backend = ComputeBackendKind.Scalar };
+        var options = new ComputeOptions { Backend = backend };
+        float[] expectedMosaic = image.ToBayer(BayerPattern.Grbg, scalar);
+        Image<Rgb> expectedDemosaic = BayerOperations.DemosaicBilinear(expectedMosaic, width, height, BayerPattern.Grbg, options: scalar);
+        float[] expectedNoise = ImageNoiseOperations.ApplySignalDependentNoise(expectedMosaic, 0.002f, 0.0001f, 42, scalar);
+
+        float[] actualMosaic = image.ToBayer(BayerPattern.Grbg, options);
+        Image<Rgb> actualDemosaic = BayerOperations.DemosaicBilinear(actualMosaic, width, height, BayerPattern.Grbg, options: options);
+        float[] actualNoise = ImageNoiseOperations.ApplySignalDependentNoise(actualMosaic, 0.002f, 0.0001f, 42, options);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(actualMosaic, Is.EqualTo(expectedMosaic).Within(3e-6f));
+            Assert.That(MemoryMarshal.Cast<Rgb, float>(actualDemosaic.Pixels.Span).ToArray(), Is.EqualTo(MemoryMarshal.Cast<Rgb, float>(expectedDemosaic.Pixels.Span).ToArray()).Within(5e-6f));
+            Assert.That(actualNoise, Is.EqualTo(expectedNoise).Within(5e-6f));
+        });
+    }
+
+    [TestCase(ComputeBackendKind.Scalar)]
+    [TestCase(ComputeBackendKind.ParallelCpu)]
+    [TestCase(ComputeBackendKind.Gpu)]
+    public void LocalEntropy_HasSupportedBackendParity(ComputeBackendKind backend)
+    {
+        const int width = 9;
+        const int height = 7;
+        float[] source = Enumerable.Range(0, width * height).Select(index => (index * 11 % 17) / 16f).ToArray();
+        float[] expected = ImageSpatialOperations.LocalEntropy(source, width, height, 1, 8, new ComputeOptions { Backend = ComputeBackendKind.Scalar });
+
+        float[] actual = ImageSpatialOperations.LocalEntropy(source, width, height, 1, 8, new ComputeOptions { Backend = backend });
+
+        Assert.That(actual, Is.EqualTo(expected).Within(2e-5f));
+    }
+
+    [Test]
+    public void LocalEntropy_RejectsExplicitSimdInsteadOfUsingScalarFallback()
+    {
+        Assert.Throws<ComputeBackendNotSupportedException>(() =>
+            ImageSpatialOperations.LocalEntropy(new float[9], 3, 3, options: new ComputeOptions { Backend = ComputeBackendKind.Simd }));
+    }
+
+    [TestCase(ComputeBackendKind.Scalar)]
+    [TestCase(ComputeBackendKind.ParallelCpu)]
+    [TestCase(ComputeBackendKind.Simd)]
+    [TestCase(ComputeBackendKind.Gpu)]
+    public void ResizeBilinear_HasBackendParityForUpsampling(ComputeBackendKind backend)
+    {
+        float[] source =
+        [
+            0f, 1f,
+            1f, 0f
+        ];
+        float[] expected = ImageResampler.Resize(source, 2, 2, 7, 5, options: new ComputeOptions { Backend = ComputeBackendKind.Scalar });
+
+        float[] actual = ImageResampler.Resize(source, 2, 2, 7, 5, options: new ComputeOptions { Backend = backend });
+
+        Assert.That(actual, Is.EqualTo(expected).Within(2e-6f));
+    }
+
+    [TestCase(ComputeBackendKind.Scalar)]
+    [TestCase(ComputeBackendKind.ParallelCpu)]
+    [TestCase(ComputeBackendKind.Simd)]
+    [TestCase(ComputeBackendKind.Gpu)]
+    public void BlurSubtractAndDownsample_RespectBackendAndHaveParity(ComputeBackendKind backend)
+    {
+        const int width = 14;
+        const int height = 10;
+        float[] source = Enumerable.Range(0, width * height).Select(index => (index * 31 % 109) / 108f).ToArray();
+        var scalar = new ComputeOptions { Backend = ComputeBackendKind.Scalar };
+        var options = new ComputeOptions { Backend = backend };
+        var expectedBlur = new float[source.Length];
+        GrayImageOperations.BoxBlur(source, expectedBlur, width, height, 2, options: scalar);
+        var actualBlur = new float[source.Length];
+        GrayImageOperations.BoxBlur(source, actualBlur, width, height, 2, options: options);
+        var expectedResidual = new float[source.Length];
+        GrayImageOperations.Subtract(source, expectedBlur, expectedResidual, options: scalar);
+        var actualResidual = new float[source.Length];
+        GrayImageOperations.Subtract(source, actualBlur, actualResidual, options: options);
+        var expectedDownsample = new float[35];
+        ImageResampler.Downsample(source, expectedDownsample, width, height, 7, 5, options: scalar);
+        var actualDownsample = new float[35];
+        ImageResampler.Downsample(source, actualDownsample, width, height, 7, 5, options: options);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(actualBlur, Is.EqualTo(expectedBlur).Within(4e-6f));
+            Assert.That(actualResidual, Is.EqualTo(expectedResidual).Within(4e-6f));
+            Assert.That(actualDownsample, Is.EqualTo(expectedDownsample).Within(4e-6f));
+        });
     }
 
     [TestCase(22, 10, 11, 5)]

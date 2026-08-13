@@ -319,6 +319,26 @@ backend-independent instruction representation. Captured `float`, `double`,
 objects and arbitrary .NET methods are intentionally rejected because they
 cannot be translated to SIMD or GPU instructions.
 
+### Fast Fourier transform
+
+FFT is a first-class array operation rather than a scalar `ComputeMath`
+expression. `Complex32` uses two contiguous single-precision components and is
+native to Scalar, Parallel CPU, AVX SIMD, and GPU backends. One- and
+two-dimensional radix-2 transforms support both allocating and in-place APIs:
+
+```csharp
+Complex32[] spectrum = Compute.Fft(samples, options: computeOptions);
+Compute.FftInPlace(spectrum, FourierDirection.Inverse, computeOptions);
+
+Complex32[] spectrum2D = Compute.Fft2D(pixels, width, height, options: computeOptions);
+```
+
+Forward transforms are unnormalized. Inverse transforms divide by the complete
+element count, so a forward/inverse pair reconstructs the original input.
+Dimensions must be positive powers of two. Explicit backend selection follows
+the same strict contract as other FastCompute operations and `Auto` uses the
+normal SIMD, parallel CPU, and heavy-GPU thresholds.
+
 ### Composite values and image formats
 
 Unmanaged structures can opt into FastCompute by implementing
@@ -357,23 +377,29 @@ generic layout adapter. An explicitly requested SIMD backend never silently
 falls back to a full scalar pixel-conversion pass: nonlinear `Srgb`/`Linear`
 transfer conversion must currently use Scalar, Parallel CPU, or GPU.
 
-`FastCompute.ImageProcessing` provides `Rgb24`, floating-point `Rgb`, `Gray8`,
+The separate `FastCompute.ImageProcessing` assembly depends on the numeric
+`FastCompute` core; the core has no image dependency. It provides `Rgb24`, floating-point `Rgb`, `Gray8`,
 `GrayF32`, and separate `Srgb`/`Linear` encoding metadata. `Image<TPixel>` can
 own an array or wrap contiguous `Memory<TPixel>` without copying. It provides
 row spans, `CopyRow`, clone, crop, color conversion, grayscale conversion,
-deterministic grayscale downsampling, box blur, and subtraction:
+deterministic resize/downsampling, convolution-backed Gaussian/Sobel/Laplacian
+filters, residuals, local contrast/entropy, spectrum preparation, Bayer CFA,
+demosaicing, and camera simulation:
 
 ```csharp
 Image<Rgb24> decoded = Image<Rgb24>.Wrap(memory, width, height);
 Image<GrayF32> linear = decoded.ToGrayscaleF32(ColorEncoding.Linear);
 Image<GrayF32> lowPass = linear.BoxBlur(radius: 1);
 Image<GrayF32> residual = linear.Subtract(lowPass);
+Image<GrayF32> edges = linear.Sobel();
+Image<GrayF32> resized = linear.Resize(width: 1024, height: 768);
 ```
 
 All computational image operations accept the same `ComputeOptions` contract
 as the array API. Explicit GPU execution is available for conversions between
-`Rgb24`, `Rgb`, `Gray8`, and `GrayF32`, transfer-function conversion, box blur,
-subtraction, and grayscale downsampling:
+`Rgb24`, `Rgb`, `Gray8`, and `GrayF32`, transfer-function conversion, convolution,
+box blur, subtraction, resize/downsampling, gradients, local contrast/entropy,
+radial spectra, Bayer/demosaicing, and noise application:
 
 ```csharp
 var gpuOptions = new ComputeOptions
@@ -410,12 +436,20 @@ Image<GrayF32> result = residual.Download();
 ```
 
 `ImageBuffer<TPixel>` owns its device allocation and must be disposed.
-Conversion, blur, subtraction, and downsampling operate device-to-device; only
+Conversion, blur, subtraction, resize, and downsampling operate device-to-device; only
 `UploadToGpu` and `Download` cross the host/device boundary.
 
 CPU area downsampling vectorizes accumulation across each source interval.
 GPU box blur uses parallel per-pixel kernels for small radii and switches to a
 linear-time sliding-window pass for radii greater than four.
+
+Explicit backend selection remains strict. Local window entropy and phase
+spectrum do not currently have SIMD implementations because per-window integer
+histograms and vector `Atan2` are not supported by the expression IR; explicit
+SIMD requests are rejected rather than executed by a hidden scalar loop. Both
+operations have Scalar, Parallel CPU, and native GPU paths. Percentile/quantile
+use the runtime in-place sort because FastCompute does not yet expose a
+backend-native ordering primitive.
 
 ### Arbitrary user methods
 

@@ -1,3 +1,5 @@
+using FastCompute.ImageProcessing;
+
 namespace AiImageForensics.Analysis;
 
 internal interface IAiImageAnalyzer

@@ -38,12 +38,12 @@ internal static class ImageGpuExecutor
                 float[] input = MemoryMarshal.Cast<TSource, float>(source).ToArray();
                 if (destinationFloat)
                 {
-                    float[] output = context.ExecuteImageConversion(input, source.Length, sourceComponents, destinationComponents, (int)sourceEncoding, (int)destinationEncoding, floatDestination: true);
+                    float[] output = context.GetImageGpuServices().ExecuteImageConversion(input, source.Length, sourceComponents, destinationComponents, (int)sourceEncoding, (int)destinationEncoding, floatDestination: true);
                     destination = MemoryMarshal.Cast<float, TDestination>(output).ToArray();
                 }
                 else
                 {
-                    byte[] output = context.ExecuteImageConversion(input, source.Length, sourceComponents, destinationComponents, (int)sourceEncoding, (int)destinationEncoding);
+                    byte[] output = context.GetImageGpuServices().ExecuteImageConversion(input, source.Length, sourceComponents, destinationComponents, (int)sourceEncoding, (int)destinationEncoding);
                     destination = MemoryMarshal.Cast<byte, TDestination>(output).ToArray();
                 }
             }
@@ -52,12 +52,12 @@ internal static class ImageGpuExecutor
                 byte[] input = MemoryMarshal.AsBytes(source).ToArray();
                 if (destinationFloat)
                 {
-                    float[] output = context.ExecuteImageConversion(input, source.Length, sourceComponents, destinationComponents, (int)sourceEncoding, (int)destinationEncoding, floatDestination: true);
+                    float[] output = context.GetImageGpuServices().ExecuteImageConversion(input, source.Length, sourceComponents, destinationComponents, (int)sourceEncoding, (int)destinationEncoding, floatDestination: true);
                     destination = MemoryMarshal.Cast<float, TDestination>(output).ToArray();
                 }
                 else
                 {
-                    byte[] output = context.ExecuteImageConversion(input, source.Length, sourceComponents, destinationComponents, (int)sourceEncoding, (int)destinationEncoding);
+                    byte[] output = context.GetImageGpuServices().ExecuteImageConversion(input, source.Length, sourceComponents, destinationComponents, (int)sourceEncoding, (int)destinationEncoding);
                     destination = MemoryMarshal.Cast<byte, TDestination>(output).ToArray();
                 }
             }
@@ -77,21 +77,56 @@ internal static class ImageGpuExecutor
         if (!ShouldUseGpu(options, left.Length)) return null;
         float[] leftArray = left.ToArray();
         float[] rightArray = right.ToArray();
-        return Execute(options, cancellationToken, context => context.ExecuteImageSubtract(leftArray, rightArray));
+        return Execute(options, cancellationToken, context => context.GetImageGpuServices().ExecuteImageSubtract(leftArray, rightArray));
     }
 
     internal static float[]? TryBoxBlur(ReadOnlySpan<float> source, int width, int height, int radius, ComputeOptions options, CancellationToken cancellationToken)
     {
         if (!ShouldUseGpu(options, source.Length)) return null;
         float[] sourceArray = source.ToArray();
-        return Execute(options, cancellationToken, context => context.ExecuteImageBoxBlur(sourceArray, width, height, radius));
+        return Execute(options, cancellationToken, context => context.GetImageGpuServices().ExecuteImageBoxBlur(sourceArray, width, height, radius));
     }
 
     internal static float[]? TryDownsample(ReadOnlySpan<float> source, int sourceWidth, int sourceHeight, int destinationWidth, int destinationHeight, ComputeOptions options, CancellationToken cancellationToken)
     {
         if (!ShouldUseGpu(options, source.Length)) return null;
         float[] sourceArray = source.ToArray();
-        return Execute(options, cancellationToken, context => context.ExecuteImageDownsample(sourceArray, sourceWidth, sourceHeight, destinationWidth, destinationHeight));
+        return Execute(options, cancellationToken, context => context.GetImageGpuServices().ExecuteImageDownsample(sourceArray, sourceWidth, sourceHeight, destinationWidth, destinationHeight));
+    }
+
+    internal static float[]? TryResize(ReadOnlySpan<float> source, int sourceWidth, int sourceHeight, int destinationWidth, int destinationHeight, ComputeOptions options, CancellationToken cancellationToken)
+    {
+        if (!ShouldUseGpu(options, Math.Max(source.Length, checked(destinationWidth * destinationHeight)))) return null;
+        float[] sourceArray = source.ToArray();
+        return Execute(options, cancellationToken, context => context.GetImageGpuServices().ExecuteImageResize(sourceArray, sourceWidth, sourceHeight, destinationWidth, destinationHeight));
+    }
+
+    internal static float[]? TryLocalContrast(ReadOnlySpan<float> source, int width, int height, int radius, ComputeOptions options)
+    {
+        if (!ShouldUseGpu(options, source.Length)) return null;
+        float[] sourceArray = source.ToArray();
+        return Execute(options, options.CancellationToken, context => context.GetImageGpuServices().ExecuteImageLocalContrast(sourceArray, width, height, radius));
+    }
+
+    internal static (float[] Sums, int[] Counts, float[] Bands)? TryRadialSpectrum(ReadOnlySpan<float> power, int width, int height, int binCount, float lowBoundary, float middleBoundary, ComputeOptions options)
+    {
+        if (!ShouldUseGpu(options, power.Length)) return null;
+        options.CancellationToken.ThrowIfCancellationRequested();
+        try
+        {
+            return GpuComputeBackend.ResolveContext(options).GetImageGpuServices().ExecuteImageRadialSpectrum(power.ToArray(), width, height, binCount, lowBoundary, middleBoundary);
+        }
+        catch when (options.Backend == ComputeBackendKind.Auto && options.AllowFallback)
+        {
+            return null;
+        }
+    }
+
+    internal static float[]? TryLocalEntropy(ReadOnlySpan<float> source, int width, int height, int radius, int binCount, ComputeOptions options)
+    {
+        if (!ShouldUseGpu(options, source.Length)) return null;
+        float[] sourceArray = source.ToArray();
+        return Execute(options, options.CancellationToken, context => context.GetImageGpuServices().ExecuteImageLocalEntropy(sourceArray, width, height, radius, binCount));
     }
 
     private static float[]? Execute(ComputeOptions options, CancellationToken cancellationToken, Func<ComputeContext, float[]> operation)

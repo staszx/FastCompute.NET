@@ -5,8 +5,14 @@ using ILGPU.Runtime;
 
 namespace FastCompute;
 
-public sealed partial class ComputeContext
+internal sealed class ImageGpuContextServices
 {
+    private readonly ComputeContext context;
+    private Accelerator accelerator => context.ExtensionAccelerator;
+
+    internal ImageGpuContextServices(ComputeContext context) =>
+        this.context = context ?? throw new ArgumentNullException(nameof(context));
+
     private Action<AcceleratorStream, Index1D, ArrayView<byte>, ArrayView<byte>, int, int, int, int>? imageByteToByteKernel;
     private Action<AcceleratorStream, Index1D, ArrayView<byte>, ArrayView<float>, int, int, int, int>? imageByteToFloatKernel;
     private Action<AcceleratorStream, Index1D, ArrayView<float>, ArrayView<byte>, int, int, int, int>? imageFloatToByteKernel;
@@ -17,8 +23,10 @@ public sealed partial class ComputeContext
     private Action<AcceleratorStream, Index1D, ArrayView<float>, ArrayView<float>, int, int>? imageBlurHorizontalSlidingKernel;
     private Action<AcceleratorStream, Index1D, ArrayView<float>, ArrayView<float>, int, int, int>? imageBlurVerticalSlidingKernel;
     private Action<AcceleratorStream, Index1D, ArrayView<float>, ArrayView<float>, int, int, int, int>? imageDownsampleKernel;
-    private Action<AcceleratorStream, Index1D, ArrayView<byte>, ArrayView<byte>, ArrayView<ByteGpuInstruction>, ArrayView<int>, ArrayView<int>, int, int>? byteCompositeMapKernel;
-    private Action<AcceleratorStream, Index1D, ArrayView<byte>, ArrayView<float>, ArrayView<ByteGpuInstruction>, int, int>? byteCompositeProjectKernel;
+    private Action<AcceleratorStream, Index1D, ArrayView<float>, ArrayView<float>, int, int, int, int>? imageResizeKernel;
+    private Action<AcceleratorStream, Index1D, ArrayView<float>, ArrayView<float>, int, int, int>? imageLocalContrastKernel;
+    private Action<AcceleratorStream, Index1D, ArrayView<float>, ArrayView<float>, ArrayView<int>, ArrayView<float>, int, int, int, float, float>? imageRadialSpectrumKernel;
+    private Action<AcceleratorStream, Index1D, ArrayView<float>, ArrayView<float>, int, int, int, int>? imageLocalEntropyKernel;
 
     internal GpuImageStorage UploadImage(byte[] source) =>
         new GpuByteImageStorage(accelerator.Allocate1D(source));
@@ -42,31 +50,6 @@ public sealed partial class ComputeContext
         buffer.View.CopyFromCPU(accelerator.DefaultStream, source);
         accelerator.Synchronize();
         return new GpuFloatImageStorage(buffer);
-    }
-
-    internal byte[] ExecuteByteCompositeMap(byte[] source, int valueCount, int sourceComponents, ByteCompositeGpuProgram program)
-    {
-        ThrowIfDisposed();
-        int destinationComponents = program.OutputOffsets.Length;
-        using var input = accelerator.Allocate1D(source);
-        using var output = accelerator.Allocate1D<byte>(checked(valueCount * destinationComponents));
-        using var instructions = accelerator.Allocate1D(program.Instructions);
-        using var offsets = accelerator.Allocate1D(program.OutputOffsets);
-        using var counts = accelerator.Allocate1D(program.OutputInstructionCounts);
-        GetImageKernel(ref byteCompositeMapKernel, () => accelerator.LoadAutoGroupedKernel<Index1D, ArrayView<byte>, ArrayView<byte>, ArrayView<ByteGpuInstruction>, ArrayView<int>, ArrayView<int>, int, int>(ImageGpuKernels.ByteCompositeMap))(accelerator.DefaultStream, valueCount, input.View, output.View, instructions.View, offsets.View, counts.View, sourceComponents, destinationComponents);
-        accelerator.Synchronize();
-        return output.GetAsArray1D();
-    }
-
-    internal float[] ExecuteByteCompositeProjection(byte[] source, int valueCount, int sourceComponents, ByteCompositeGpuProgram program)
-    {
-        ThrowIfDisposed();
-        using var input = accelerator.Allocate1D(source);
-        using var output = accelerator.Allocate1D<float>(valueCount);
-        using var instructions = accelerator.Allocate1D(program.Instructions);
-        GetImageKernel(ref byteCompositeProjectKernel, () => accelerator.LoadAutoGroupedKernel<Index1D, ArrayView<byte>, ArrayView<float>, ArrayView<ByteGpuInstruction>, int, int>(ImageGpuKernels.ByteCompositeProject))(accelerator.DefaultStream, valueCount, input.View, output.View, instructions.View, program.Instructions.Length, sourceComponents);
-        accelerator.Synchronize();
-        return output.GetAsArray1D();
     }
 
     internal byte[] DownloadByteImage(GpuImageStorage storage)
@@ -184,6 +167,24 @@ public sealed partial class ComputeContext
         }
     }
 
+    internal GpuImageStorage ResizeImageBuffer(GpuImageStorage source, int sourceWidth, int sourceHeight, int destinationWidth, int destinationHeight)
+    {
+        var input = ((GpuFloatImageStorage)source).Buffer;
+        int destinationLength = checked(destinationWidth * destinationHeight);
+        var output = accelerator.Allocate1D<float>(destinationLength);
+        try
+        {
+            GetImageKernel(ref imageResizeKernel, () => accelerator.LoadAutoGroupedKernel<Index1D, ArrayView<float>, ArrayView<float>, int, int, int, int>(ImageGpuKernels.ResizeBilinear))(accelerator.DefaultStream, destinationLength, input.View, output.View, sourceWidth, sourceHeight, destinationWidth, destinationHeight);
+            accelerator.Synchronize();
+            return new GpuFloatImageStorage(output);
+        }
+        catch
+        {
+            output.Dispose();
+            throw;
+        }
+    }
+
     internal byte[] ExecuteImageConversion(byte[] source, int valueCount, int sourceComponents, int destinationComponents, int sourceEncoding, int destinationEncoding)
     {
         ThrowIfDisposed();
@@ -257,6 +258,52 @@ public sealed partial class ComputeContext
         return output.GetAsArray1D();
     }
 
+    internal float[] ExecuteImageResize(float[] source, int sourceWidth, int sourceHeight, int destinationWidth, int destinationHeight)
+    {
+        ThrowIfDisposed();
+        int destinationLength = checked(destinationWidth * destinationHeight);
+        using MemoryBuffer1D<float, Stride1D.Dense> input = accelerator.Allocate1D(source);
+        using MemoryBuffer1D<float, Stride1D.Dense> output = accelerator.Allocate1D<float>(destinationLength);
+        GetImageKernel(ref imageResizeKernel, () => accelerator.LoadAutoGroupedKernel<Index1D, ArrayView<float>, ArrayView<float>, int, int, int, int>(ImageGpuKernels.ResizeBilinear))(accelerator.DefaultStream, destinationLength, input.View, output.View, sourceWidth, sourceHeight, destinationWidth, destinationHeight);
+        accelerator.Synchronize();
+        return output.GetAsArray1D();
+    }
+
+    internal float[] ExecuteImageLocalContrast(float[] source, int width, int height, int radius)
+    {
+        ThrowIfDisposed();
+        using MemoryBuffer1D<float, Stride1D.Dense> input = accelerator.Allocate1D(source);
+        using MemoryBuffer1D<float, Stride1D.Dense> output = accelerator.Allocate1D<float>(source.Length);
+        GetImageKernel(ref imageLocalContrastKernel, () => accelerator.LoadAutoGroupedKernel<Index1D, ArrayView<float>, ArrayView<float>, int, int, int>(ImageGpuKernels.LocalContrast))(accelerator.DefaultStream, source.Length, input.View, output.View, width, height, radius);
+        accelerator.Synchronize();
+        return output.GetAsArray1D();
+    }
+
+    internal (float[] Sums, int[] Counts, float[] Bands) ExecuteImageRadialSpectrum(float[] power, int width, int height, int binCount, float lowBoundary, float middleBoundary)
+    {
+        ThrowIfDisposed();
+        using MemoryBuffer1D<float, Stride1D.Dense> input = accelerator.Allocate1D(power);
+        using MemoryBuffer1D<float, Stride1D.Dense> sums = accelerator.Allocate1D<float>(binCount);
+        using MemoryBuffer1D<int, Stride1D.Dense> counts = accelerator.Allocate1D<int>(binCount);
+        using MemoryBuffer1D<float, Stride1D.Dense> bands = accelerator.Allocate1D<float>(3);
+        sums.MemSetToZero();
+        counts.MemSetToZero();
+        bands.MemSetToZero();
+        GetImageKernel(ref imageRadialSpectrumKernel, () => accelerator.LoadAutoGroupedKernel<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<int>, ArrayView<float>, int, int, int, float, float>(ImageGpuKernels.AccumulateRadialSpectrum))(accelerator.DefaultStream, power.Length, input.View, sums.View, counts.View, bands.View, width, height, binCount, lowBoundary, middleBoundary);
+        accelerator.Synchronize();
+        return (sums.GetAsArray1D(), counts.GetAsArray1D(), bands.GetAsArray1D());
+    }
+
+    internal float[] ExecuteImageLocalEntropy(float[] source, int width, int height, int radius, int binCount)
+    {
+        ThrowIfDisposed();
+        using MemoryBuffer1D<float, Stride1D.Dense> input = accelerator.Allocate1D(source);
+        using MemoryBuffer1D<float, Stride1D.Dense> output = accelerator.Allocate1D<float>(source.Length);
+        GetImageKernel(ref imageLocalEntropyKernel, () => accelerator.LoadAutoGroupedKernel<Index1D, ArrayView<float>, ArrayView<float>, int, int, int, int>(ImageGpuKernels.LocalEntropy))(accelerator.DefaultStream, source.Length, input.View, output.View, width, height, radius, binCount);
+        accelerator.Synchronize();
+        return output.GetAsArray1D();
+    }
+
     private IReadOnlyList<ComputeCompilationResult> PrecompileImageKernels()
     {
         return
@@ -271,8 +318,10 @@ public sealed partial class ComputeContext
             CompileImageKernel(() => imageBlurHorizontalSlidingKernel is not null, () => _ = GetImageKernel(ref imageBlurHorizontalSlidingKernel, () => accelerator.LoadAutoGroupedKernel<Index1D, ArrayView<float>, ArrayView<float>, int, int>(ImageGpuKernels.BlurHorizontalSliding))),
             CompileImageKernel(() => imageBlurVerticalSlidingKernel is not null, () => _ = GetImageKernel(ref imageBlurVerticalSlidingKernel, () => accelerator.LoadAutoGroupedKernel<Index1D, ArrayView<float>, ArrayView<float>, int, int, int>(ImageGpuKernels.BlurVerticalSliding))),
             CompileImageKernel(() => imageDownsampleKernel is not null, () => _ = GetImageKernel(ref imageDownsampleKernel, () => accelerator.LoadAutoGroupedKernel<Index1D, ArrayView<float>, ArrayView<float>, int, int, int, int>(ImageGpuKernels.Downsample))),
-            CompileImageKernel(() => byteCompositeMapKernel is not null, () => _ = GetImageKernel(ref byteCompositeMapKernel, () => accelerator.LoadAutoGroupedKernel<Index1D, ArrayView<byte>, ArrayView<byte>, ArrayView<ByteGpuInstruction>, ArrayView<int>, ArrayView<int>, int, int>(ImageGpuKernels.ByteCompositeMap))),
-            CompileImageKernel(() => byteCompositeProjectKernel is not null, () => _ = GetImageKernel(ref byteCompositeProjectKernel, () => accelerator.LoadAutoGroupedKernel<Index1D, ArrayView<byte>, ArrayView<float>, ArrayView<ByteGpuInstruction>, int, int>(ImageGpuKernels.ByteCompositeProject)))
+            CompileImageKernel(() => imageResizeKernel is not null, () => _ = GetImageKernel(ref imageResizeKernel, () => accelerator.LoadAutoGroupedKernel<Index1D, ArrayView<float>, ArrayView<float>, int, int, int, int>(ImageGpuKernels.ResizeBilinear))),
+            CompileImageKernel(() => imageLocalContrastKernel is not null, () => _ = GetImageKernel(ref imageLocalContrastKernel, () => accelerator.LoadAutoGroupedKernel<Index1D, ArrayView<float>, ArrayView<float>, int, int, int>(ImageGpuKernels.LocalContrast))),
+            CompileImageKernel(() => imageRadialSpectrumKernel is not null, () => _ = GetImageKernel(ref imageRadialSpectrumKernel, () => accelerator.LoadAutoGroupedKernel<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<int>, ArrayView<float>, int, int, int, float, float>(ImageGpuKernels.AccumulateRadialSpectrum)))
+            ,CompileImageKernel(() => imageLocalEntropyKernel is not null, () => _ = GetImageKernel(ref imageLocalEntropyKernel, () => accelerator.LoadAutoGroupedKernel<Index1D, ArrayView<float>, ArrayView<float>, int, int, int, int>(ImageGpuKernels.LocalEntropy)))
         ];
     }
 
@@ -318,4 +367,6 @@ public sealed partial class ComputeContext
         TKernel candidate = compile();
         return Interlocked.CompareExchange(ref cache, candidate, null) ?? candidate;
     }
+
+    private void ThrowIfDisposed() => _ = accelerator;
 }

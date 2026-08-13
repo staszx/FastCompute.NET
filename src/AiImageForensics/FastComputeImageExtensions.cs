@@ -37,8 +37,11 @@ public static class FastComputeImageExtensions
         {
             if (destination.Length < Width) throw new ArgumentException("Destination is too short.", nameof(destination));
             ReadOnlySpan<Rgb24> source = image.GetReadOnlyRowSpan(y);
-            const float scale = 1f / 255f;
-            for (int x = 0; x < source.Length; x++) destination[x] = new RgbFloat(source[x].Red * scale, source[x].Green * scale, source[x].Blue * scale);
+            PixelConverter.Convert<Rgb24, Rgb>(
+                source,
+                MemoryMarshal.Cast<RgbFloat, Rgb>(destination[..Width]),
+                image.Encoding,
+                image.Encoding);
         }
     }
 
@@ -51,7 +54,7 @@ public static class FastComputeImageExtensions
         {
             if (destination.Length < Width) throw new ArgumentException("Destination is too short.", nameof(destination));
             ReadOnlySpan<Rgb> source = image.GetReadOnlyRowSpan(y);
-            for (int x = 0; x < source.Length; x++) destination[x] = new RgbFloat(source[x].Red, source[x].Green, source[x].Blue);
+            source.CopyTo(MemoryMarshal.Cast<RgbFloat, Rgb>(destination[..Width]));
         }
 
         public bool TryCreateLinearLuminance(CancellationToken cancellationToken, out float[]? luminance)

@@ -38,6 +38,8 @@ internal static class SimdExpressionCompiler
                 GetMethod(nameof(SimdVectorOperations.Maximum), 2),
             [ComputeFunction.Abs] =
                 GetMethod(nameof(SimdVectorOperations.Absolute), 1),
+            [ComputeFunction.Sqrt] =
+                GetMethod(nameof(SimdVectorOperations.SquareRoot), 1),
             [ComputeFunction.Clamp] =
                 GetMethod(nameof(SimdVectorOperations.Clamp), 3)
         };
@@ -160,6 +162,10 @@ internal static class SimdVectorOperations
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal static Vector256<float> Absolute(Vector256<float> value) =>
         Avx.And(value, AbsoluteValueMask);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal static Vector256<float> SquareRoot(Vector256<float> value) =>
+        Avx.Sqrt(value);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal static Vector256<float> Clamp(

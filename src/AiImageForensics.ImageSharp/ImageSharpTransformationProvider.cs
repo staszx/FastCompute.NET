@@ -1,3 +1,4 @@
+using FastCompute.ImageProcessing;
 using SixLabors.ImageSharp.Formats.Jpeg;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;

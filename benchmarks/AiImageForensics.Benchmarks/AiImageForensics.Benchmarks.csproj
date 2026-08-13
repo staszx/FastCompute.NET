@@ -13,5 +13,6 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\AiImageForensics\AiImageForensics.csproj" />
     <ProjectReference Include="..\..\src\FastCompute\FastCompute.csproj" />
+    <ProjectReference Include="..\..\src\FastCompute.ImageProcessing\FastCompute.ImageProcessing.csproj" />
   </ItemGroup>
 </Project>

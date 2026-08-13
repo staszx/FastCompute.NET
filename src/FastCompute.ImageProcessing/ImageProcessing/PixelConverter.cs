@@ -8,6 +8,10 @@ public static class PixelConverter
 {
     private const float ByteToUnit = 1f / byte.MaxValue;
 
+    /// <summary>Calculates Rec. 709 luminance from a normalized floating-point RGB value.</summary>
+    public static float GetLuminance(in Rgb pixel) =>
+        (0.2126f * pixel.Red) + (0.7152f * pixel.Green) + (0.0722f * pixel.Blue);
+
     /// <summary>Converts an image to another native pixel format.</summary>
     public static Image<TDestination> ConvertTo<TSource, TDestination>(
         this Image<TSource> source,
@@ -34,17 +38,6 @@ public static class PixelConverter
         }
         var destination = GC.AllocateUninitializedArray<TDestination>(
             source.Pixels.Length);
-        if ((effectiveOptions.Backend == ComputeBackendKind.Auto ||
-             effectiveOptions.Backend == ComputeBackendKind.ParallelCpu) &&
-            TryConvertParallel(source, destination, targetEncoding))
-        {
-            return Image<TDestination>.Load(
-                destination,
-                source.Width,
-                source.Height,
-                targetEncoding);
-        }
-
         Convert<TSource, TDestination>(
             source.Pixels.Span,
             destination,
@@ -56,156 +49,6 @@ public static class PixelConverter
             source.Width,
             source.Height,
             targetEncoding);
-    }
-
-    private static bool TryConvertParallel<TSource, TDestination>(
-        Image<TSource> source,
-        TDestination[] destination,
-        ColorEncoding destinationEncoding)
-        where TSource : unmanaged
-        where TDestination : unmanaged
-    {
-        const int parallelThreshold = 65_536;
-        if (source.Pixels.Length < parallelThreshold ||
-            !MemoryMarshal.TryGetArray(
-                (ReadOnlyMemory<TSource>)source.Pixels,
-                out ArraySegment<TSource> sourceSegment))
-        {
-            return false;
-        }
-
-        if (typeof(TDestination) == typeof(Gray8))
-        {
-            Gray8[] gray = (Gray8[])(object)destination;
-            if (typeof(TSource) == typeof(Rgb))
-            {
-                ConvertRgbToGray8Parallel((Rgb[])(object)sourceSegment.Array!, sourceSegment.Offset, gray, source.Encoding, destinationEncoding);
-                return true;
-            }
-            if (typeof(TSource) == typeof(Rgb24))
-            {
-                ConvertRgb24ToGray8Parallel((Rgb24[])(object)sourceSegment.Array!, sourceSegment.Offset, gray, source.Encoding, destinationEncoding);
-                return true;
-            }
-        }
-        else if (typeof(TDestination) == typeof(GrayF32) &&
-                 source.Encoding == destinationEncoding)
-        {
-            GrayF32[] gray = (GrayF32[])(object)destination;
-            if (typeof(TSource) == typeof(Rgb))
-            {
-                RunParallel(destination.Length, (start, end) =>
-                    PixelConversionKernels.RgbToGrayF32(
-                        ((Rgb[])(object)sourceSegment.Array!).AsSpan(sourceSegment.Offset + start, end - start),
-                        gray.AsSpan(start, end - start)));
-                return true;
-            }
-            if (typeof(TSource) == typeof(Rgb24))
-            {
-                RunParallel(destination.Length, (start, end) =>
-                    PixelConversionKernels.Rgb24ToGrayF32(
-                        ((Rgb24[])(object)sourceSegment.Array!).AsSpan(sourceSegment.Offset + start, end - start),
-                        gray.AsSpan(start, end - start)));
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private static void ConvertRgbToGray8Parallel(
-        Rgb[] source,
-        int sourceOffset,
-        Gray8[] destination,
-        ColorEncoding sourceEncoding,
-        ColorEncoding destinationEncoding)
-    {
-        if (sourceEncoding == destinationEncoding)
-        {
-            RunParallel(destination.Length, (start, end) =>
-                PixelConversionKernels.RgbToGray8(
-                    source.AsSpan(sourceOffset + start, end - start),
-                    destination.AsSpan(start, end - start)));
-            return;
-        }
-        RunParallel(
-            destination.Length,
-            (start, end) =>
-            {
-                bool changeEncoding = sourceEncoding != destinationEncoding;
-                for (int i = start; i < end; i++)
-                {
-                    Rgb pixel = source[sourceOffset + i];
-                    float red = pixel.Red;
-                    float green = pixel.Green;
-                    float blue = pixel.Blue;
-                    if (changeEncoding)
-                    {
-                        red = ChangeEncoding(red, sourceEncoding, destinationEncoding);
-                        green = ChangeEncoding(green, sourceEncoding, destinationEncoding);
-                        blue = ChangeEncoding(blue, sourceEncoding, destinationEncoding);
-                    }
-
-                    destination[i] = new Gray8(
-                        ToByte(Luminance(red, green, blue)));
-                }
-            });
-    }
-
-    private static void ConvertRgb24ToGray8Parallel(
-        Rgb24[] source,
-        int sourceOffset,
-        Gray8[] destination,
-        ColorEncoding sourceEncoding,
-        ColorEncoding destinationEncoding)
-    {
-        if (sourceEncoding == destinationEncoding)
-        {
-            RunParallel(destination.Length, (start, end) =>
-                PixelConversionKernels.Rgb24ToGray8(
-                    source.AsSpan(sourceOffset + start, end - start),
-                    destination.AsSpan(start, end - start)));
-            return;
-        }
-        RunParallel(
-            destination.Length,
-            (start, end) =>
-            {
-                bool changeEncoding = sourceEncoding != destinationEncoding;
-                for (int i = start; i < end; i++)
-                {
-                    Rgb24 pixel = source[sourceOffset + i];
-                    float red = pixel.Red * ByteToUnit;
-                    float green = pixel.Green * ByteToUnit;
-                    float blue = pixel.Blue * ByteToUnit;
-                    if (changeEncoding)
-                    {
-                        red = ChangeEncoding(red, sourceEncoding, destinationEncoding);
-                        green = ChangeEncoding(green, sourceEncoding, destinationEncoding);
-                        blue = ChangeEncoding(blue, sourceEncoding, destinationEncoding);
-                    }
-
-                    destination[i] = new Gray8(
-                        ToByte(Luminance(red, green, blue)));
-                }
-            });
-    }
-
-    private static void RunParallel(
-        int length,
-        Action<int, int> operation)
-    {
-        int workerCount = Math.Min(length, Environment.ProcessorCount);
-        int rangeSize = (length + workerCount - 1) / workerCount;
-        Parallel.For(
-            0,
-            workerCount,
-            worker =>
-            {
-                int start = worker * rangeSize;
-                int end = Math.Min(start + rangeSize, length);
-                operation(start, end);
-            });
     }
 
     /// <summary>Converts pixels between native formats without image allocation.</summary>
@@ -258,13 +101,59 @@ public static class PixelConverter
                     : "Scalar, ParallelCpu");
         }
 
+        bool useParallel = effectiveOptions.Backend == ComputeBackendKind.ParallelCpu ||
+            (effectiveOptions.Backend == ComputeBackendKind.Auto && source.Length >= effectiveOptions.Thresholds.ParallelThreshold);
+        if (useParallel && source.Length > 0)
+        {
+            TSource[] input = source.ToArray();
+            var output = GC.AllocateUninitializedArray<TDestination>(source.Length);
+            int workerCount = Math.Min(source.Length, effectiveOptions.MaxDegreeOfParallelism ?? Environment.ProcessorCount);
+            int rangeSize = (source.Length + workerCount - 1) / workerCount;
+            Parallel.For(0, workerCount, new ParallelOptions
+            {
+                CancellationToken = effectiveOptions.CancellationToken,
+                MaxDegreeOfParallelism = effectiveOptions.MaxDegreeOfParallelism ?? -1
+            }, worker =>
+            {
+                int start = worker * rangeSize;
+                int end = Math.Min(start + rangeSize, input.Length);
+                if (start < end)
+                {
+                    ConvertCore<TSource, TDestination>(
+                        new ReadOnlySpan<TSource>(input, start, end - start),
+                        new Span<TDestination>(output, start, end - start),
+                        sourceEncoding,
+                        destinationEncoding,
+                        allowSimd: false);
+                }
+            });
+            output.CopyTo(destination);
+            return;
+        }
+
+        bool allowSimd = effectiveOptions.Backend == ComputeBackendKind.Simd ||
+            (effectiveOptions.Backend == ComputeBackendKind.Auto && source.Length >= effectiveOptions.Thresholds.SimdThreshold && Avx2.IsSupported);
+        ConvertCore(source, destination, sourceEncoding, destinationEncoding, allowSimd);
+    }
+
+    private static void ConvertCore<TSource, TDestination>(
+        ReadOnlySpan<TSource> source,
+        Span<TDestination> destination,
+        ColorEncoding sourceEncoding,
+        ColorEncoding destinationEncoding,
+        bool allowSimd)
+        where TSource : unmanaged
+        where TDestination : unmanaged
+    {
+
         if (typeof(TSource) == typeof(Rgb24))
         {
             ConvertFromRgb24(
                 MemoryMarshal.Cast<TSource, Rgb24>(source),
                 destination,
                 sourceEncoding,
-                destinationEncoding);
+                destinationEncoding,
+                allowSimd);
             return;
         }
 
@@ -274,7 +163,8 @@ public static class PixelConverter
                 MemoryMarshal.Cast<TSource, Rgb>(source),
                 destination,
                 sourceEncoding,
-                destinationEncoding);
+                destinationEncoding,
+                allowSimd);
             return;
         }
 
@@ -284,7 +174,8 @@ public static class PixelConverter
                 MemoryMarshal.Cast<TSource, Gray8>(source),
                 destination,
                 sourceEncoding,
-                destinationEncoding);
+                destinationEncoding,
+                allowSimd);
             return;
         }
 
@@ -294,7 +185,8 @@ public static class PixelConverter
                 MemoryMarshal.Cast<TSource, GrayF32>(source),
                 destination,
                 sourceEncoding,
-                destinationEncoding);
+                destinationEncoding,
+                allowSimd);
             return;
         }
 
@@ -315,7 +207,8 @@ public static class PixelConverter
         ReadOnlySpan<Rgb24> source,
         Span<TDestination> destination,
         ColorEncoding sourceEncoding,
-        ColorEncoding destinationEncoding)
+        ColorEncoding destinationEncoding,
+        bool allowSimd)
         where TDestination : unmanaged
     {
         if (typeof(TDestination) == typeof(Rgb24))
@@ -329,7 +222,7 @@ public static class PixelConverter
         else if (typeof(TDestination) == typeof(Rgb))
         {
             Span<Rgb> output = MemoryMarshal.Cast<TDestination, Rgb>(destination);
-            if (sourceEncoding == destinationEncoding)
+            if (sourceEncoding == destinationEncoding && allowSimd)
             {
                 PixelConversionKernels.Rgb24ToRgb(source, output);
                 return;
@@ -346,7 +239,7 @@ public static class PixelConverter
         else if (typeof(TDestination) == typeof(Gray8))
         {
             Span<Gray8> output = MemoryMarshal.Cast<TDestination, Gray8>(destination);
-            if (sourceEncoding == destinationEncoding)
+            if (sourceEncoding == destinationEncoding && allowSimd)
             {
                 PixelConversionKernels.Rgb24ToGray8(source, output);
                 return;
@@ -363,7 +256,7 @@ public static class PixelConverter
         else if (typeof(TDestination) == typeof(GrayF32))
         {
             Span<GrayF32> output = MemoryMarshal.Cast<TDestination, GrayF32>(destination);
-            if (sourceEncoding == destinationEncoding)
+            if (sourceEncoding == destinationEncoding && allowSimd)
             {
                 PixelConversionKernels.Rgb24ToGrayF32(source, output);
                 return;
@@ -387,7 +280,8 @@ public static class PixelConverter
         ReadOnlySpan<Rgb> source,
         Span<TDestination> destination,
         ColorEncoding sourceEncoding,
-        ColorEncoding destinationEncoding)
+        ColorEncoding destinationEncoding,
+        bool allowSimd)
         where TDestination : unmanaged
     {
         if (typeof(TDestination) == typeof(Rgb))
@@ -405,7 +299,7 @@ public static class PixelConverter
         else if (typeof(TDestination) == typeof(Rgb24))
         {
             Span<Rgb24> output = MemoryMarshal.Cast<TDestination, Rgb24>(destination);
-            if (sourceEncoding == destinationEncoding)
+            if (sourceEncoding == destinationEncoding && allowSimd)
             {
                 PixelConversionKernels.RgbToRgb24(source, output);
                 return;
@@ -422,7 +316,7 @@ public static class PixelConverter
         else if (typeof(TDestination) == typeof(Gray8))
         {
             Span<Gray8> output = MemoryMarshal.Cast<TDestination, Gray8>(destination);
-            if (sourceEncoding == destinationEncoding)
+            if (sourceEncoding == destinationEncoding && allowSimd)
             {
                 PixelConversionKernels.RgbToGray8(source, output);
                 return;
@@ -439,7 +333,7 @@ public static class PixelConverter
         else if (typeof(TDestination) == typeof(GrayF32))
         {
             Span<GrayF32> output = MemoryMarshal.Cast<TDestination, GrayF32>(destination);
-            if (sourceEncoding == destinationEncoding)
+            if (sourceEncoding == destinationEncoding && allowSimd)
             {
                 PixelConversionKernels.RgbToGrayF32(source, output);
                 return;
@@ -463,35 +357,40 @@ public static class PixelConverter
         ReadOnlySpan<Gray8> source,
         Span<TDestination> destination,
         ColorEncoding sourceEncoding,
-        ColorEncoding destinationEncoding)
+        ColorEncoding destinationEncoding,
+        bool allowSimd)
         where TDestination : unmanaged
     {
         ConvertGrayBytes(
             MemoryMarshal.Cast<Gray8, byte>(source),
             destination,
             sourceEncoding,
-            destinationEncoding);
+            destinationEncoding,
+            allowSimd);
     }
 
     private static void ConvertFromGrayF32<TDestination>(
         ReadOnlySpan<GrayF32> source,
         Span<TDestination> destination,
         ColorEncoding sourceEncoding,
-        ColorEncoding destinationEncoding)
+        ColorEncoding destinationEncoding,
+        bool allowSimd)
         where TDestination : unmanaged
     {
         ConvertGrayFloats(
             MemoryMarshal.Cast<GrayF32, float>(source),
             destination,
             sourceEncoding,
-            destinationEncoding);
+            destinationEncoding,
+            allowSimd);
     }
 
     private static void ConvertGrayBytes<TDestination>(
         ReadOnlySpan<byte> source,
         Span<TDestination> destination,
         ColorEncoding sourceEncoding,
-        ColorEncoding destinationEncoding)
+        ColorEncoding destinationEncoding,
+        bool allowSimd)
         where TDestination : unmanaged
     {
         if (typeof(TDestination) == typeof(Gray8))
@@ -508,7 +407,7 @@ public static class PixelConverter
         else if (typeof(TDestination) == typeof(GrayF32))
         {
             Span<GrayF32> output = MemoryMarshal.Cast<TDestination, GrayF32>(destination);
-            if (sourceEncoding == destinationEncoding)
+            if (sourceEncoding == destinationEncoding && allowSimd)
             {
                 PixelConversionKernels.Gray8ToGrayF32(source, output);
                 return;
@@ -524,7 +423,7 @@ public static class PixelConverter
         else if (typeof(TDestination) == typeof(Rgb24))
         {
             Span<Rgb24> output = MemoryMarshal.Cast<TDestination, Rgb24>(destination);
-            if (sourceEncoding == destinationEncoding)
+            if (sourceEncoding == destinationEncoding && allowSimd)
             {
                 PixelConversionKernels.Gray8ToRgb24(source, output);
                 return;
@@ -541,7 +440,7 @@ public static class PixelConverter
         else if (typeof(TDestination) == typeof(Rgb))
         {
             Span<Rgb> output = MemoryMarshal.Cast<TDestination, Rgb>(destination);
-            if (sourceEncoding == destinationEncoding)
+            if (sourceEncoding == destinationEncoding && allowSimd)
             {
                 PixelConversionKernels.Gray8ToRgb(source, output);
                 return;
@@ -565,7 +464,8 @@ public static class PixelConverter
         ReadOnlySpan<float> source,
         Span<TDestination> destination,
         ColorEncoding sourceEncoding,
-        ColorEncoding destinationEncoding)
+        ColorEncoding destinationEncoding,
+        bool allowSimd)
         where TDestination : unmanaged
     {
         if (typeof(TDestination) == typeof(GrayF32))
@@ -580,7 +480,7 @@ public static class PixelConverter
         else if (typeof(TDestination) == typeof(Gray8))
         {
             Span<Gray8> output = MemoryMarshal.Cast<TDestination, Gray8>(destination);
-            if (sourceEncoding == destinationEncoding)
+            if (sourceEncoding == destinationEncoding && allowSimd)
             {
                 PixelConversionKernels.GrayF32ToGray8(source, output);
                 return;
@@ -594,7 +494,7 @@ public static class PixelConverter
         else if (typeof(TDestination) == typeof(Rgb))
         {
             Span<Rgb> output = MemoryMarshal.Cast<TDestination, Rgb>(destination);
-            if (sourceEncoding == destinationEncoding)
+            if (sourceEncoding == destinationEncoding && allowSimd)
             {
                 PixelConversionKernels.GrayF32ToRgb(source, output);
                 return;
@@ -609,7 +509,7 @@ public static class PixelConverter
         else if (typeof(TDestination) == typeof(Rgb24))
         {
             Span<Rgb24> output = MemoryMarshal.Cast<TDestination, Rgb24>(destination);
-            if (sourceEncoding == destinationEncoding)
+            if (sourceEncoding == destinationEncoding && allowSimd)
             {
                 PixelConversionKernels.GrayF32ToRgb24(source, output);
                 return;

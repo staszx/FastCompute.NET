@@ -1,4 +1,4 @@
-using AiImageForensics.Statistics;
+using FastCompute;
 using FastCompute.ImageProcessing;
 
 namespace AiImageForensics.Tests;
@@ -27,15 +27,15 @@ public sealed class CoreTests
     public void Statistics_CalculateMomentsAndCorrelationSafely()
     {
         float[] values = [1, 2, 3, 4];
-        DistributionStatistics result = StatisticsMath.Calculate(values);
+        StatisticsResult result = Compute.CalculateStatistics(values);
         Assert.Multiple(() =>
         {
             Assert.That(result.Mean, Is.EqualTo(2.5).Within(1e-12));
             Assert.That(result.Variance, Is.EqualTo(1.25).Within(1e-12));
             Assert.That(result.StandardDeviation, Is.EqualTo(Math.Sqrt(1.25)).Within(1e-12));
             Assert.That(result.Skewness, Is.EqualTo(0).Within(1e-12));
-            Assert.That(StatisticsMath.CalculateCorrelation(values, values), Is.EqualTo(1).Within(1e-12));
-            Assert.That(StatisticsMath.CalculateCorrelation(new float[16], 4, 4, 1, 0), Is.Zero);
+            Assert.That(Compute.Correlation(values, values), Is.EqualTo(1).Within(1e-12));
+            Assert.That(ImageStatistics.SpatialCorrelation(new float[16], 4, 4, 1, 0), Is.Zero);
         });
     }
 

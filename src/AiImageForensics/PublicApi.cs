@@ -1,3 +1,7 @@
+using FastCompute;
+using FastCompute.ImageProcessing;
+using System.Runtime.InteropServices;
+
 namespace AiImageForensics;
 
 /// <summary>Provides normalized RGB pixels to the analysis pipeline.</summary>
@@ -28,6 +32,7 @@ public interface IImageColorEncodingSource
 }
 
 /// <summary>Normalized floating-point RGB pixel.</summary>
+[StructLayout(LayoutKind.Sequential)]
 public readonly struct RgbFloat(float r, float g, float b)
 {
     /// <summary>Red channel.</summary>
@@ -47,19 +52,6 @@ public enum DetectionMode
     Balanced,
     /// <summary>Balanced features plus block and multi-scale analysis.</summary>
     Accurate
-}
-
-/// <summary>Bayer color-filter-array layout.</summary>
-public enum BayerPattern
-{
-    /// <summary>RG/GB layout.</summary>
-    Rggb,
-    /// <summary>BG/GR layout.</summary>
-    Bggr,
-    /// <summary>GR/BG layout.</summary>
-    Grbg,
-    /// <summary>GB/RG layout.</summary>
-    Gbrg
 }
 
 /// <summary>Category of forensic evidence.</summary>
@@ -162,21 +154,6 @@ public sealed class AiDetectionResult
     public IReadOnlyList<AiEvidence> Evidence { get; init; } = Array.Empty<AiEvidence>();
 }
 
-/// <summary>Immutable statistical moments.</summary>
-public sealed class DistributionStatistics
-{
-    /// <summary>Mean.</summary>
-    public double Mean { get; init; }
-    /// <summary>Population variance.</summary>
-    public double Variance { get; init; }
-    /// <summary>Standard deviation.</summary>
-    public double StandardDeviation { get; init; }
-    /// <summary>Standardized third moment.</summary>
-    public double Skewness { get; init; }
-    /// <summary>Excess kurtosis.</summary>
-    public double Kurtosis { get; init; }
-}
-
 /// <summary>Signal-dependent noise model.</summary>
 public readonly struct NoiseSignalModel
 {
@@ -192,7 +169,7 @@ public readonly struct NoiseSignalModel
 public sealed class NoiseAnalysisResult
 {
     /// <summary>Residual distribution.</summary>
-    public DistributionStatistics Statistics { get; init; } = new();
+    public StatisticsResult Statistics { get; init; }
     /// <summary>Residual correlations in deterministic offset order.</summary>
     public IReadOnlyList<float> Autocorrelations { get; init; } = Array.Empty<float>();
     /// <summary>Signal-dependent variance fit.</summary>

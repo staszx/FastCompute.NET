@@ -1,3 +1,6 @@
+using FastCompute;
+using FastCompute.ImageProcessing;
+
 namespace AiImageForensics.Analysis;
 
 internal sealed class AccurateAnalyzer : IAiImageAnalyzer
@@ -18,49 +21,29 @@ internal sealed class AccurateAnalyzer : IAiImageAnalyzer
             CancellationToken = cancellationToken
         }, by =>
         {
-            ReadOnlySpan<float> pixels = luminance.Span;
-            Span<double> paritySums = stackalloc double[4];
-            Span<int> parityCounts = stackalloc int[4];
-            Span<double> means = stackalloc double[4];
             for (int bx = 0; bx < blocksX; bx++)
             {
-                paritySums.Clear();
-                parityCounts.Clear();
-                means.Clear();
                 int x0 = bx * 256, y0 = by * 256;
                 int x1 = Math.Min(image.Width, x0 + 256), y1 = Math.Min(image.Height, y0 + 256);
-                double sum = 0, sumSquares = 0, laplacianEnergy = 0, gradientEnergy = 0;
-                long count = 0;
-                for (int y = y0; y < y1; y++)
-                for (int x = x0; x < x1; x++)
+                int blockWidth = x1 - x0;
+                int blockHeight = y1 - y0;
+                float[] block = ImageRegionOperations.Crop(luminance.Span, image.Width, image.Height, x0, y0, blockWidth, blockHeight);
+                var computeOptions = new ComputeOptions
                 {
-                    double value = pixels[(y * image.Width) + x];
-                    sum += value; sumSquares += value * value; count++;
-                    int parity = ((y & 1) << 1) | (x & 1);
-                    paritySums[parity] += value; parityCounts[parity]++;
-                    if (x > x0 && x + 1 < x1 && y > y0 && y + 1 < y1)
-                    {
-                        int index = (y * image.Width) + x;
-                        double gx = pixels[index + 1] - pixels[index - 1];
-                        double gy = pixels[index + image.Width] - pixels[index - image.Width];
-                        double lap = pixels[index - 1] + pixels[index + 1] + pixels[index - image.Width] + pixels[index + image.Width] - (4 * value);
-                        gradientEnergy += (gx * gx) + (gy * gy);
-                        laplacianEnergy += lap * lap;
-                    }
-                }
-
-                double safeCount = Math.Max(1, count);
-                double mean = sum / safeCount;
+                    Backend = ComputeBackendKind.Auto,
+                    CancellationToken = cancellationToken,
+                    MaxDegreeOfParallelism = 1
+                };
+                StatisticsResult statistics = Compute.CalculateStatistics(block, computeOptions);
+                float[] laplacian = ImageFilters.Laplacian(block, blockWidth, blockHeight, computeOptions);
+                float[] gradient = ImageFilters.GradientMagnitude(block, blockWidth, blockHeight, computeOptions);
+                float[][] paritySamples = BayerOperations.ExtractParitySamples(block, blockWidth, blockHeight, computeOptions);
+                double[] parityMeans = paritySamples.Select(samples => Compute.Mean(samples, computeOptions)).ToArray();
                 int blockIndex = (by * blocksX) + bx;
-                spatial[blockIndex] = Math.Max(0, (sumSquares / safeCount) - (mean * mean));
-                noise[blockIndex] = laplacianEnergy / safeCount;
-                frequency[blockIndex] = gradientEnergy / safeCount;
-                double parityMean = 0;
-                for (int p = 0; p < 4; p++) { means[p] = paritySums[p] / Math.Max(1, parityCounts[p]); parityMean += means[p]; }
-                parityMean /= 4;
-                double parityVariance = 0;
-                for (int p = 0; p < 4; p++) { double d = means[p] - parityMean; parityVariance += d * d; }
-                periodicity[blockIndex] = parityVariance / 4;
+                spatial[blockIndex] = statistics.Variance;
+                noise[blockIndex] = Compute.SumOfSquares(laplacian, computeOptions) / Math.Max(1, laplacian.Length);
+                frequency[blockIndex] = Compute.SumOfSquares(gradient, computeOptions) / Math.Max(1, gradient.Length);
+                periodicity[blockIndex] = Compute.Variance(parityMeans, computeOptions);
             }
         });
 
@@ -104,17 +87,16 @@ internal sealed class AccurateAnalyzer : IAiImageAnalyzer
 
     private static BlockAggregate Aggregate(double[] values)
     {
-        double sum = 0; for (int i = 0; i < values.Length; i++) sum += values[i];
-        double mean = sum / values.Length;
-        double variance = 0; for (int i = 0; i < values.Length; i++) { double d = values[i] - mean; variance += d * d; }
-        var sorted = (double[])values.Clone();
-        Array.Sort(sorted);
+        double mean = Compute.Mean(values);
+        double variance = Compute.Variance(values);
+        var medianWorking = (double[])values.Clone();
+        var p90Working = (double[])values.Clone();
         return new BlockAggregate(
             mean,
-            sorted[sorted.Length / 2],
-            sorted[^1],
-            sorted[Math.Min(sorted.Length - 1, (int)(sorted.Length * 0.9))],
-            variance / values.Length);
+            Compute.Median(medianWorking),
+            values.Max(),
+            Compute.Percentile(p90Working, 90d),
+            variance);
     }
 
     private static double Uniformity(BlockAggregate aggregate) =>
@@ -123,15 +105,8 @@ internal sealed class AccurateAnalyzer : IAiImageAnalyzer
     private static double MeanGradient(ReadOnlySpan<float> values, int width, int height)
     {
         if (width < 2 || height < 2) return 0;
-        double sum = 0; long count = 0;
-        for (int y = 0; y < height - 1; y++)
-        for (int x = 0; x < width - 1; x++)
-        {
-            int index = (y * width) + x;
-            sum += Math.Abs(values[index + 1] - values[index]) + Math.Abs(values[index + width] - values[index]);
-            count += 2;
-        }
-        return sum / Math.Max(1, count);
+        float[] gradient = ImageFilters.GradientMagnitude(values, width, height);
+        return Compute.Mean(gradient);
     }
 
     private static double Average(double a, double b, double c, double d) => (a + b + c + d) / 4;

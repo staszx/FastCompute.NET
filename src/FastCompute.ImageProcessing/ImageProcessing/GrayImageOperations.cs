@@ -74,6 +74,18 @@ public static class GrayImageOperations
             return;
         }
 
+        ComputeBackendKind backend = ResolveHostBackend(effectiveOptions, length);
+        if (backend == ComputeBackendKind.Scalar)
+        {
+            BlurScalar(source, destination, width, height, radius, cancellationToken);
+            return;
+        }
+        if (backend == ComputeBackendKind.ParallelCpu)
+        {
+            BlurParallel(source, destination, width, height, radius, cancellationToken, effectiveOptions.MaxDegreeOfParallelism);
+            return;
+        }
+
         float[] temporary = ArrayPool<float>.Shared.Rent(length);
         try
         {
@@ -136,27 +148,78 @@ public static class GrayImageOperations
             throw new ArgumentException("Buffers must have matching lengths.");
         }
 
-        ComputeOptions effectiveOptions = options ?? ComputeOptions.Default;
-        float[]? gpuResult = ImageGpuExecutor.TrySubtract(left, right, effectiveOptions, cancellationToken);
-        if (gpuResult is not null)
-        {
-            gpuResult.CopyTo(destination);
-            return;
-        }
+        cancellationToken.ThrowIfCancellationRequested();
+        float[] result = Compute.Zip(left.ToArray(), right.ToArray(), (first, second) => first - second, options);
+        cancellationToken.ThrowIfCancellationRequested();
+        result.CopyTo(destination);
+    }
 
-        int index = 0;
-        if (Vector.IsHardwareAccelerated)
+    private static void BlurScalar(ReadOnlySpan<float> source, Span<float> destination, int width, int height, int radius, CancellationToken token)
+    {
+        for (int y = 0; y < height; y++)
         {
-            int lanes = Vector<float>.Count;
-            int vectorizedLength = left.Length - (left.Length % lanes);
-            for (; index < vectorizedLength; index += lanes)
+            token.ThrowIfCancellationRequested();
+            for (int x = 0; x < width; x++)
             {
-                if ((index & 0xFFFF) == 0) cancellationToken.ThrowIfCancellationRequested();
-                (new Vector<float>(left.Slice(index, lanes)) - new Vector<float>(right.Slice(index, lanes)))
-                    .CopyTo(destination.Slice(index, lanes));
+                int startX = Math.Max(0, x - radius);
+                int endX = Math.Min(width - 1, x + radius);
+                int startY = Math.Max(0, y - radius);
+                int endY = Math.Min(height - 1, y + radius);
+                double sum = 0d;
+                int count = 0;
+                for (int currentY = startY; currentY <= endY; currentY++)
+                for (int currentX = startX; currentX <= endX; currentX++)
+                {
+                    sum += source[(currentY * width) + currentX];
+                    count++;
+                }
+                destination[(y * width) + x] = (float)(sum / count);
             }
         }
-        for (; index < left.Length; index++) destination[index] = left[index] - right[index];
+    }
+
+    private static void BlurParallel(ReadOnlySpan<float> source, Span<float> destination, int width, int height, int radius, CancellationToken token, int? maxDegree)
+    {
+        float[] input = source[..checked(width * height)].ToArray();
+        var output = GC.AllocateUninitializedArray<float>(input.Length);
+        Parallel.For(0, height, new ParallelOptions
+        {
+            CancellationToken = token,
+            MaxDegreeOfParallelism = maxDegree ?? -1
+        }, y =>
+        {
+            for (int x = 0; x < width; x++)
+            {
+                int startX = Math.Max(0, x - radius);
+                int endX = Math.Min(width - 1, x + radius);
+                int startY = Math.Max(0, y - radius);
+                int endY = Math.Min(height - 1, y + radius);
+                double sum = 0d;
+                int count = 0;
+                for (int currentY = startY; currentY <= endY; currentY++)
+                for (int currentX = startX; currentX <= endX; currentX++)
+                {
+                    sum += input[(currentY * width) + currentX];
+                    count++;
+                }
+                output[(y * width) + x] = (float)(sum / count);
+            }
+        });
+        output.CopyTo(destination);
+    }
+
+    private static ComputeBackendKind ResolveHostBackend(ComputeOptions options, int length)
+    {
+        if (options.Backend == ComputeBackendKind.Gpu) throw new ComputeBackendUnavailableException(ComputeBackendKind.Gpu);
+        if (options.Backend == ComputeBackendKind.Simd)
+        {
+            if (!Vector.IsHardwareAccelerated) throw new ComputeBackendUnavailableException(ComputeBackendKind.Simd);
+            return ComputeBackendKind.Simd;
+        }
+        if (options.Backend != ComputeBackendKind.Auto) return options.Backend;
+        if (length >= options.Thresholds.ParallelThreshold) return ComputeBackendKind.ParallelCpu;
+        if (length >= options.Thresholds.SimdThreshold && Vector.IsHardwareAccelerated) return ComputeBackendKind.Simd;
+        return ComputeBackendKind.Scalar;
     }
 
     private static void BlurThreeTapHorizontal(ReadOnlySpan<float> source, Span<float> destination, int width, int height, CancellationToken cancellationToken)

@@ -3,7 +3,6 @@ using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.X86;
 using FastCompute.Expressions;
-using FastCompute.ImageProcessing;
 
 namespace FastCompute.Backends;
 
@@ -77,13 +76,13 @@ internal static class ByteComputeSimdExecutor
             for (int component = 0; component < destinationComponents; component++)
                 Evaluate(program.Outputs[component], components).CopyTo(output.Slice(component * lanes, lanes));
             if (lanes == 8 && Avx2.IsSupported && destinationComponents == 1)
-                PixelConversionKernels.StoreByte1(output[..lanes], destination, index);
+                PackedComponentKernels.StoreByte1(output[..lanes], destination, index);
             else if (lanes == 8 && Avx2.IsSupported && destinationComponents == 2)
-                PixelConversionKernels.InterleaveByte2(output[..lanes], output.Slice(lanes, lanes), destination, index);
+                PackedComponentKernels.InterleaveByte2(output[..lanes], output.Slice(lanes, lanes), destination, index);
             else if (lanes == 8 && Avx2.IsSupported && destinationComponents == 3)
-                PixelConversionKernels.InterleaveByte3(output[..lanes], output.Slice(lanes, lanes), output.Slice(lanes * 2, lanes), destination, index);
+                PackedComponentKernels.InterleaveByte3(output[..lanes], output.Slice(lanes, lanes), output.Slice(lanes * 2, lanes), destination, index);
             else if (lanes == 8 && Avx2.IsSupported && destinationComponents == 4)
-                PixelConversionKernels.InterleaveByte4(output[..lanes], output.Slice(lanes, lanes), output.Slice(lanes * 2, lanes), output.Slice(lanes * 3, lanes), destination, index);
+                PackedComponentKernels.InterleaveByte4(output[..lanes], output.Slice(lanes, lanes), output.Slice(lanes * 2, lanes), output.Slice(lanes * 3, lanes), destination, index);
             else
                 for (int lane = 0; lane < lanes; lane++)
                     for (int component = 0; component < destinationComponents; component++)
@@ -104,7 +103,7 @@ internal static class ByteComputeSimdExecutor
         }
         if (lanes == 8 && Avx2.IsSupported && componentCount == 3)
         {
-            PixelConversionKernels.DeinterleaveByte3(
+            PackedComponentKernels.DeinterleaveByte3(
                 source,
                 valueIndex,
                 gathered[..lanes],
@@ -117,7 +116,7 @@ internal static class ByteComputeSimdExecutor
         }
         if (lanes == 8 && Avx2.IsSupported && componentCount == 2)
         {
-            PixelConversionKernels.DeinterleaveByte2(
+            PackedComponentKernels.DeinterleaveByte2(
                 source,
                 valueIndex,
                 gathered[..lanes],
@@ -128,7 +127,7 @@ internal static class ByteComputeSimdExecutor
         }
         if (lanes == 8 && Avx2.IsSupported && componentCount == 4)
         {
-            PixelConversionKernels.DeinterleaveByte4(
+            PackedComponentKernels.DeinterleaveByte4(
                 source,
                 valueIndex,
                 gathered[..lanes],

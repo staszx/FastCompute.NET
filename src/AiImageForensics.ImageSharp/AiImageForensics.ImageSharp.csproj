@@ -15,6 +15,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\AiImageForensics\AiImageForensics.csproj" />
+    <ProjectReference Include="..\FastCompute.ImageProcessing\FastCompute.ImageProcessing.csproj" />
     <PackageReference Include="SixLabors.ImageSharp" Version="3.1.11" />
   </ItemGroup>
 

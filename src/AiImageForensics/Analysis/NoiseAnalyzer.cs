@@ -1,4 +1,5 @@
-using AiImageForensics.Statistics;
+using FastCompute;
+using FastCompute.ImageProcessing;
 
 namespace AiImageForensics.Analysis;
 
@@ -10,12 +11,12 @@ internal sealed class NoiseAnalyzer : IAiImageAnalyzer
     {
         ReadOnlySpan<float> residual = context.GetResidual(cancellationToken);
         ReadOnlySpan<float> luminance = context.GetLinearLuminance(cancellationToken);
-        DistributionStatistics stats = StatisticsMath.Calculate(residual);
+        StatisticsResult stats = Compute.CalculateStatistics(residual);
         var correlations = new float[Offsets.Length];
         for (int i = 0; i < Offsets.Length; i++)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            correlations[i] = (float)StatisticsMath.CalculateCorrelation(residual, image.Width, image.Height, Offsets[i].X, Offsets[i].Y);
+            correlations[i] = (float)ImageStatistics.SpatialCorrelation(residual, image.Width, image.Height, Offsets[i].X, Offsets[i].Y);
         }
         NoiseSignalModel signalModel = FitSignalModel(luminance, residual);
 
@@ -65,16 +66,12 @@ internal sealed class NoiseAnalyzer : IAiImageAnalyzer
         }
         if (valid < 2) return default;
 
-        double meanX = 0, meanY = 0;
-        for (int i = 0; i < valid; i++) { meanX += x[i]; meanY += y[i]; }
-        meanX /= valid; meanY /= valid;
-        double covariance = 0, varianceX = 0;
-        for (int i = 0; i < valid; i++) { double dx = x[i] - meanX; covariance += dx * (y[i] - meanY); varianceX += dx * dx; }
-        double a = varianceX > 1e-20 ? covariance / varianceX : 0;
-        double b = meanY - (a * meanX);
-        double ssResidual = 0, ssTotal = 0;
-        for (int i = 0; i < valid; i++) { double d = y[i] - ((a * x[i]) + b); ssResidual += d * d; double total = y[i] - meanY; ssTotal += total * total; }
-        double rSquared = ssTotal > 1e-20 ? 1 - (ssResidual / ssTotal) : 0;
-        return new NoiseSignalModel { A = a, B = b, RSquared = Math.Clamp(rSquared, 0, 1) };
+        LinearRegressionResult regression = Compute.LinearRegression(x[..valid], y[..valid]);
+        return new NoiseSignalModel
+        {
+            A = regression.Slope,
+            B = regression.Intercept,
+            RSquared = regression.RSquared
+        };
     }
 }

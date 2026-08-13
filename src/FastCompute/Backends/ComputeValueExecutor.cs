@@ -5,7 +5,6 @@ using System.Runtime.Intrinsics.X86;
 using FastCompute.Expressions;
 using FastCompute.Backends.Gpu;
 using FastCompute.Gpu;
-using FastCompute.ImageProcessing;
 
 namespace FastCompute.Backends;
 
@@ -471,7 +470,7 @@ internal static class ComputeValueExecutor
         }
         if (componentCount == 2 && lanes == 8 && Avx2.IsSupported)
         {
-            PixelConversionKernels.DeinterleaveFloat2(
+            PackedComponentKernels.DeinterleaveFloat2(
                 input,
                 pixelIndex,
                 gathered.Slice(0, lanes),
@@ -482,7 +481,7 @@ internal static class ComputeValueExecutor
         }
         if (componentCount == 3 && lanes == 8 && Avx2.IsSupported)
         {
-            PixelConversionKernels.DeinterleaveFloat3(
+            PackedComponentKernels.DeinterleaveFloat3(
                 input,
                 pixelIndex,
                 gathered.Slice(0, lanes),
@@ -521,7 +520,7 @@ internal static class ComputeValueExecutor
         }
         if (componentCount == 2 && lanes == 8 && Avx2.IsSupported)
         {
-            PixelConversionKernels.InterleaveFloat2(
+            PackedComponentKernels.InterleaveFloat2(
                 components.Slice(0, lanes),
                 components.Slice(lanes, lanes),
                 output,
@@ -530,7 +529,7 @@ internal static class ComputeValueExecutor
         }
         if (componentCount == 3 && lanes == 8 && Avx2.IsSupported)
         {
-            PixelConversionKernels.InterleaveFloat3(
+            PackedComponentKernels.InterleaveFloat3(
                 components.Slice(0, lanes),
                 components.Slice(lanes, lanes),
                 components.Slice(lanes * 2, lanes),

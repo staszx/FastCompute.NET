@@ -15,6 +15,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\FastCompute\FastCompute.csproj" />
+    <ProjectReference Include="..\FastCompute.ImageProcessing\FastCompute.ImageProcessing.csproj" />
   </ItemGroup>
 
 </Project>

@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>12</LangVersion>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <SignAssembly>true</SignAssembly>
+    <AssemblyOriginatorKeyFile>$(MSBuildThisFileDirectory)..\..\FastCompute.snk</AssemblyOriginatorKeyFile>
+    <IsPackable>true</IsPackable>
+    <PackageId>FastCompute.ImageProcessing</PackageId>
+    <Title>FastCompute.NET Image Processing</Title>
+    <Version>0.7.0</Version>
+    <Authors>staszx</Authors>
+    <Description>Backend-neutral native image processing for FastCompute.NET.</Description>
+    <PackageTags>image-processing;simd;gpu;fastcompute</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\FastCompute\FastCompute.csproj" />
+    <PackageReference Include="ILGPU" Version="1.5.3" />
+    <PackageReference Include="ILGPU.Algorithms" Version="1.5.3" />
+  </ItemGroup>
+
+</Project>

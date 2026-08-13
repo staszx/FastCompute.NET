@@ -81,6 +81,15 @@ public sealed partial class ComputeContext : IDisposable
         }
     }
 
+    internal Accelerator ExtensionAccelerator
+    {
+        get
+        {
+            ThrowIfDisposed();
+            return accelerator;
+        }
+    }
+
     /// <summary>Gets a snapshot of transient device-buffer pool usage.</summary>
     public ComputeMemoryPoolStatistics MemoryPoolStatistics
     {
@@ -250,7 +259,8 @@ public sealed partial class ComputeContext : IDisposable
             }
         }
 
-        results.AddRange(PrecompileImageKernels());
+        results.AddRange(PrecompileByteCompositeKernels());
+        results.AddRange(PrecompileFourierKernels());
 
         return results;
     }
