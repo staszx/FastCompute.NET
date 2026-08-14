@@ -1,5 +1,12 @@
 # FastCompute.NET Release Notes
 
+## 0.8.1 - 2026-08-14
+
+Documentation-only repack. Each NuGet package now ships its own README:
+`FastCompute` carries the core guide and `FastCompute.ImageProcessing` carries
+the image processing guide, while the repository root README remains the
+project overview. No API or behavior changes.
+
 ## 0.8.0 - 2026-08-14
 
 Native signal, statistics, and image processing primitives. The image and

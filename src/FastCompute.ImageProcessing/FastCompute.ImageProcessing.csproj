@@ -12,7 +12,7 @@
     <IsPackable>true</IsPackable>
     <PackageId>FastCompute.ImageProcessing</PackageId>
     <Title>FastCompute.NET Image Processing</Title>
-    <Version>0.8.0</Version>
+    <Version>0.8.1</Version>
     <Authors>staszx</Authors>
     <Copyright>Copyright (c) 2026 staszx</Copyright>
     <Description>Backend-neutral native image processing for FastCompute.NET.</Description>
@@ -31,7 +31,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <None Include="..\..\README.md" Pack="true" PackagePath="\" Link="README.md" />
+    <None Include="README.md" Pack="true" PackagePath="\" Link="README.md" />
     <None Include="..\..\CHANGELOG.md" Pack="true" PackagePath="\" Link="CHANGELOG.md" />
     <None Include="..\..\RELEASE_NOTES.md" Pack="true" PackagePath="\" Link="RELEASE_NOTES.md" />
   </ItemGroup>

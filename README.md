@@ -4,7 +4,7 @@ FastCompute.NET is a strongly named .NET 8 library for fast array processing.
 It provides one API for single-threaded CPU, multi-threaded CPU, SIMD, and
 ILGPU execution and supports `float`, `double`, and `int` arrays.
 
-Version `0.8.0` is the current stable release. The assembly public key token is
+Version `0.8.1` is the current stable release. The assembly public key token is
 `c76a60c96d65300c`.
 
 ## Quick start
@@ -12,7 +12,7 @@ Version `0.8.0` is the current stable release. The assembly public key token is
 ### 1. Install the packages
 
 ```powershell
-dotnet add package FastCompute --version 0.8.0
+dotnet add package FastCompute --version 0.8.1
 ```
 
 The consuming project must target .NET 8 or a compatible later framework.
@@ -20,7 +20,7 @@ The consuming project must target .NET 8 or a compatible later framework.
 Image processing is a separate package that depends on the core:
 
 ```powershell
-dotnet add package FastCompute.ImageProcessing --version 0.8.0
+dotnet add package FastCompute.ImageProcessing --version 0.8.1
 ```
 
 The core package has no image dependency; install the image package only when
@@ -982,7 +982,7 @@ dotnet run --project samples/FastCompute.Sample.Console `
 ```powershell
 dotnet build FastCompute.sln --configuration Release
 dotnet test FastCompute.sln --configuration Release --no-build
-./pack.ps1 -Version 0.8.0
+./pack.ps1 -Version 0.8.1
 ```
 
 `pack.ps1` builds and tests the solution, creates `.nupkg` and `.snupkg`
@@ -992,11 +992,13 @@ package-only consumer smoke test. On a Windows or Linux CI machine without a
 hardware GPU:
 
 ```powershell
-./pack.ps1 -Version 0.8.0 -SkipGpuTests
+./pack.ps1 -Version 0.8.1 -SkipGpuTests
 ```
 
 ## Further documentation
 
+- [FastCompute core package README](src/FastCompute/README.md)
+- [FastCompute.ImageProcessing package README](src/FastCompute.ImageProcessing/README.md)
 - [AiImageForensics usage and limitations](src/AiImageForensics/README.md)
 - [Image processing algorithm migration checklist](docs/ai-image-forensics-algorithm-migration.md)
 - [Stable release compliance](https://github.com/staszx/FastCompute.NET/blob/main/docs/stable-release-compliance.md)

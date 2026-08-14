@@ -2,6 +2,20 @@
 
 All notable changes to FastCompute.NET are documented in this file.
 
+## 0.8.1 - 2026-08-14
+
+### Changed
+
+- Documentation-only repack: each package now ships its own README.
+  `FastCompute` contains the core guide, `FastCompute.ImageProcessing`
+  contains the image processing guide, and the repository root README remains
+  the project overview.
+
+### Compatibility
+
+- No API or behavior changes; the package contents are identical to 0.8.0
+  except for the packaged README files.
+
 ## 0.8.0 - 2026-08-14
 
 Native signal, statistics, and image processing primitives release.

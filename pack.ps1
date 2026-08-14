@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$Configuration = "Release",
-    [string]$Version = "0.8.0",
+    [string]$Version = "0.8.1",
     [string]$OutputDirectory = "artifacts",
     [switch]$SkipGpuTests
 )
