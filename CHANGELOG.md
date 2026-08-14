@@ -2,21 +2,60 @@
 
 All notable changes to FastCompute.NET are documented in this file.
 
-## Unreleased
+## 0.8.0 - 2026-08-14
+
+Native signal, statistics, and image processing primitives release.
+
+### Added
+
+- One- and two-dimensional radix-2 FFT for `Complex32[]` with allocating and
+  in-place APIs (`Fft`, `FftInPlace`, `Fft2D`, `Fft2DInPlace`, and inverse
+  variants) on Scalar, Parallel CPU, AVX SIMD, and GPU backends.
+- `Complex32` as a native composite value with `PowerSpectrum`,
+  `MagnitudeSpectrum`, `PhaseSpectrum`, `FindPeaks`, `PeakToMedianRatio`,
+  `MeanAbsoluteDifference`, `Percentile`, `Quantile`, `Median`, and window
+  functions.
+- 1D and 2D convolution (`Convolve1D`, `Convolve2D`) through the same
+  `ComputeOptions` contract.
+- Statistics primitives: `CalculateStatistics`, `Mean`, `Variance`,
+  `StandardDeviation`, `Skewness`, `Kurtosis`, `SumOfSquares`, `Covariance`,
+  `Correlation`, `AutoCorrelation`, `LinearRegression`, and `ShannonEntropy`.
+- `Threshold` with SIMD/GPU paths, plus `MinMax`, `Normalize`, and
+  `SafeDivide` utilities.
+- Native SIMD layout load/store kernels and GPU execution for homogeneous
+  `byte`-component values with one through four packed components.
+- The separate `FastCompute.ImageProcessing` assembly and NuGet package with
+  `Rgb24`, `Rgb`, `Gray8`, `GrayF32`, convolution-backed
+  Gaussian/Sobel/Laplacian filters, residuals, local contrast and entropy,
+  spectrum preparation, deterministic area resize, Bayer CFA sampling,
+  demosaicing, camera simulation, and GPU-resident image buffers.
+- Lazy selector chains and binary Zip graphs fused with `Sum`, `Min`, `Max`,
+  or `Average` reductions without materializing intermediate arrays on every
+  backend, including chunked GPU execution.
 
 ### Changed
 
-- Lazy selector chains followed by `Sum`, `Min`, `Max`, or `Average` now fuse
-  Map evaluation into the reduction for Scalar, Parallel CPU, SIMD, and GPU
-  backends without materializing an intermediate mapped array.
-- Map-reduction fusion supports `float`, `double`, and `int`, including chunked
-  GPU execution.
-- Lazy pipelines can record one binary `Zip`; selectors before and after it
-  fuse into one Scalar, Parallel CPU, SIMD, or GPU Zip operation for `float`,
-  `double`, and `int`, including chunked and explicit in-place execution.
-- Lazy binary Zip graphs followed by `Sum`, `Min`, `Max`, or `Average` now
-  evaluate and reduce in one fused operation without materializing a zipped
-  array on any backend, including chunked GPU execution.
+- AI image forensics migrated from private FFT, statistics, convolution,
+  Bayer, and camera-simulation implementations to the generic core and image
+  processing primitives. The ownership checklist is in
+  `docs/ai-image-forensics-algorithm-migration.md`.
+- `pack.ps1` now produces both `FastCompute` and
+  `FastCompute.ImageProcessing` `.nupkg`/`.snupkg` artifacts, verifies the
+  strong-name identity of both assemblies, and the package smoke test consumes
+  both packages.
+- The Quick Start, samples, and package metadata reference version 0.8.0.
+
+### Compatibility
+
+- The core `FastCompute` package has no image dependency.
+- `FastCompute.ImageProcessing` 0.8.0 depends on `FastCompute` 0.8.0 and
+  shares the public key token `c76a60c96d65300c`.
+- `GpuMath` remains a fully supported alias of `ComputeMath`.
+- Local window entropy and phase spectrum have no SIMD implementation;
+  explicit SIMD requests are rejected rather than executed by a hidden scalar
+  loop. Both operations support Scalar, Parallel CPU, and GPU.
+- Percentile/quantile use the runtime in-place sort because FastCompute does
+  not yet expose a backend-native ordering primitive.
 
 ## 0.7.0 - 2026-07-30
 

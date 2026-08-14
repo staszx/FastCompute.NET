@@ -12,7 +12,7 @@
     <IsPackable>true</IsPackable>
     <PackageId>FastCompute</PackageId>
     <Title>FastCompute.NET</Title>
-    <Version>0.7.0</Version>
+<Version>0.8.0</Version>
     <Authors>staszx</Authors>
     <Copyright>Copyright (c) 2026 staszx</Copyright>
     <Description>High-performance array computation with pluggable CPU, SIMD, and GPU backends.</Description>
@@ -20,7 +20,7 @@
     <PackageProjectUrl>https://github.com/staszx/FastCompute.NET</PackageProjectUrl>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <PackageReleaseNotes>Backend-neutral ComputeMath expression API for Scalar CPU, Parallel CPU, SIMD, and GPU. GpuMath remains fully supported as a compatibility alias.</PackageReleaseNotes>
+    <PackageReleaseNotes>$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)..\..\RELEASE_NOTES.md'))</PackageReleaseNotes>
     <RepositoryUrl>https://github.com/staszx/FastCompute.NET</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
@@ -33,6 +33,7 @@
   <ItemGroup>
     <None Include="..\..\README.md" Pack="true" PackagePath="\" Link="README.md" />
     <None Include="..\..\CHANGELOG.md" Pack="true" PackagePath="\" Link="CHANGELOG.md" />
+    <None Include="..\..\RELEASE_NOTES.md" Pack="true" PackagePath="\" Link="RELEASE_NOTES.md" />
   </ItemGroup>
 
   <ItemGroup>

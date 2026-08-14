@@ -6,11 +6,12 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-    <FastComputePackageVersion Condition="'$(FastComputePackageVersion)' == ''">0.7.0</FastComputePackageVersion>
+    <FastComputePackageVersion Condition="'$(FastComputePackageVersion)' == ''">0.8.0</FastComputePackageVersion>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="FastCompute" Version="$(FastComputePackageVersion)" />
+    <PackageReference Include="FastCompute.ImageProcessing" Version="$(FastComputePackageVersion)" />
   </ItemGroup>
 
 </Project>

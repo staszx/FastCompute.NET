@@ -1,4 +1,5 @@
 using FastCompute;
+using FastCompute.ImageProcessing;
 
 byte[] publicKeyToken =
     typeof(Compute).Assembly.GetName().GetPublicKeyToken() ?? [];
@@ -6,6 +7,13 @@ Ensure(
     Convert.ToHexString(publicKeyToken)
         .Equals("C76A60C96D65300C", StringComparison.Ordinal),
     "The package assembly does not have the expected strong-name token.");
+
+byte[] imageProcessingToken =
+    typeof(Image<>).Assembly.GetName().GetPublicKeyToken() ?? [];
+Ensure(
+    Convert.ToHexString(imageProcessingToken)
+        .Equals("C76A60C96D65300C", StringComparison.Ordinal),
+    "The image processing assembly does not have the expected strong-name token.");
 
 float[] source = [0.0f, 0.25f, 0.5f, 0.75f, 1.0f];
 float[] scalar = Compute.Run(
@@ -54,6 +62,25 @@ float[] pipelineResult = source
 Ensure(
     pipelineResult.SequenceEqual([1.0f, 1.5f, 2.0f, 2.5f, 3.0f]),
     "Lazy compute pipeline execution failed.");
+
+Image<Rgb24> image = Image<Rgb24>.Load(
+    Enumerable.Range(0, 16)
+        .Select(index => new Rgb24(100, 100, 100))
+        .ToArray(),
+    width: 4,
+    height: 4);
+Image<GrayF32> gray = image.ToGrayscaleF32(
+    ColorEncoding.Srgb,
+    new ComputeOptions { Backend = ComputeBackendKind.Simd });
+Ensure(
+    gray.Pixels.Span[0].Value > 0.39f && gray.Pixels.Span[0].Value < 0.394f,
+    "Image processing package conversion failed.");
+Image<GrayF32> lowPass = gray.BoxBlur(
+    radius: 1,
+    options: new ComputeOptions { Backend = ComputeBackendKind.Simd });
+Ensure(
+    lowPass.Pixels.Span[0].Value > 0.39f && lowPass.Pixels.Span[0].Value < 0.394f,
+    "Image processing package blur failed.");
 
 ComputeDeviceInfo? hardwareGpu = ComputeContext.GetAccelerators()
     .FirstOrDefault(

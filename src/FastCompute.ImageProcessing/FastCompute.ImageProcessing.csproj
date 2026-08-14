@@ -12,16 +12,38 @@
     <IsPackable>true</IsPackable>
     <PackageId>FastCompute.ImageProcessing</PackageId>
     <Title>FastCompute.NET Image Processing</Title>
-    <Version>0.7.0</Version>
+    <Version>0.8.0</Version>
     <Authors>staszx</Authors>
+    <Copyright>Copyright (c) 2026 staszx</Copyright>
     <Description>Backend-neutral native image processing for FastCompute.NET.</Description>
     <PackageTags>image-processing;simd;gpu;fastcompute</PackageTags>
+    <PackageProjectUrl>https://github.com/staszx/FastCompute.NET</PackageProjectUrl>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReleaseNotes>$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)..\..\RELEASE_NOTES.md'))</PackageReleaseNotes>
+    <RepositoryUrl>https://github.com/staszx/FastCompute.NET</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <Deterministic>true</Deterministic>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" Link="README.md" />
+    <None Include="..\..\CHANGELOG.md" Pack="true" PackagePath="\" Link="CHANGELOG.md" />
+    <None Include="..\..\RELEASE_NOTES.md" Pack="true" PackagePath="\" Link="RELEASE_NOTES.md" />
+  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\FastCompute\FastCompute.csproj" />
     <PackageReference Include="ILGPU" Version="1.5.3" />
     <PackageReference Include="ILGPU.Algorithms" Version="1.5.3" />
+    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.0.0">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
   </ItemGroup>
 
 </Project>

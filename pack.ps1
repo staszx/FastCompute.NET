@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$Configuration = "Release",
-    [string]$Version = "0.7.0",
+    [string]$Version = "0.8.0",
     [string]$OutputDirectory = "artifacts",
     [switch]$SkipGpuTests
 )
@@ -10,6 +10,9 @@ $ErrorActionPreference = "Stop"
 $repositoryRoot = $PSScriptRoot
 $solutionPath = Join-Path $repositoryRoot "FastCompute.sln"
 $projectPath = Join-Path $repositoryRoot "src/FastCompute/FastCompute.csproj"
+$imageProcessingProjectPath = Join-Path `
+    $repositoryRoot `
+    "src/FastCompute.ImageProcessing/FastCompute.ImageProcessing.csproj"
 $packageOutput = Join-Path $repositoryRoot $OutputDirectory
 
 function Invoke-DotNet {
@@ -76,9 +79,21 @@ Invoke-DotNet pack $projectPath `
     --no-restore `
     --output $packageOutput `
     -p:PackageVersion=$Version
+Invoke-DotNet pack $imageProcessingProjectPath `
+    --configuration $Configuration `
+    --no-build `
+    --no-restore `
+    --output $packageOutput `
+    -p:PackageVersion=$Version
 
 $packagePath = Join-Path $packageOutput "FastCompute.$Version.nupkg"
 $symbolPath = Join-Path $packageOutput "FastCompute.$Version.snupkg"
+$imageProcessingPackagePath = Join-Path `
+    $packageOutput `
+    "FastCompute.ImageProcessing.$Version.nupkg"
+$imageProcessingSymbolPath = Join-Path `
+    $packageOutput `
+    "FastCompute.ImageProcessing.$Version.snupkg"
 if (-not (Test-Path -LiteralPath $packagePath)) {
     throw "Expected package was not created: $packagePath"
 }
@@ -87,16 +102,45 @@ if (-not (Test-Path -LiteralPath $symbolPath)) {
     throw "Expected symbol package was not created: $symbolPath"
 }
 
+if (-not (Test-Path -LiteralPath $imageProcessingPackagePath)) {
+    throw `
+        "Expected image processing package was not created: $imageProcessingPackagePath"
+}
+
+if (-not (Test-Path -LiteralPath $imageProcessingSymbolPath)) {
+    throw `
+        "Expected image processing symbol package was not created: $imageProcessingSymbolPath"
+}
+
+function Assert-PublicKeyToken {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$DllPath,
+        [string]$AssemblyLabel,
+        [string]$ExpectedToken = "c76a60c96d65300c"
+    )
+
+    $assemblyName = [System.Reflection.AssemblyName]::GetAssemblyName($DllPath)
+    $publicKeyToken = (
+        $assemblyName.GetPublicKeyToken() |
+            ForEach-Object { $_.ToString("x2") }) -join ""
+    if ($publicKeyToken -ne $ExpectedToken) {
+        throw `
+            "Unexpected $AssemblyLabel public key token: $publicKeyToken"
+    }
+}
+
 $assemblyPath = Join-Path `
     $repositoryRoot `
     "src/FastCompute/bin/$Configuration/net8.0/FastCompute.dll"
-$assemblyName = [System.Reflection.AssemblyName]::GetAssemblyName($assemblyPath)
-$publicKeyToken = (
-    $assemblyName.GetPublicKeyToken() |
-        ForEach-Object { $_.ToString("x2") }) -join ""
-if ($publicKeyToken -ne "c76a60c96d65300c") {
-    throw "Unexpected FastCompute public key token: $publicKeyToken"
-}
+Assert-PublicKeyToken -DllPath $assemblyPath -AssemblyLabel "FastCompute"
+
+$imageProcessingAssemblyPath = Join-Path `
+    $repositoryRoot `
+    "src/FastCompute.ImageProcessing/bin/$Configuration/net8.0/FastCompute.ImageProcessing.dll"
+Assert-PublicKeyToken `
+    -DllPath $imageProcessingAssemblyPath `
+    -AssemblyLabel "FastCompute.ImageProcessing"
 
 $smokeProject = Join-Path `
     $repositoryRoot `
@@ -125,3 +169,5 @@ Invoke-DotNet run `
 
 Write-Host "Package ready: $packagePath"
 Write-Host "Symbols ready: $symbolPath"
+Write-Host "Image processing package ready: $imageProcessingPackagePath"
+Write-Host "Image processing symbols ready: $imageProcessingSymbolPath"

@@ -4,18 +4,27 @@ FastCompute.NET is a strongly named .NET 8 library for fast array processing.
 It provides one API for single-threaded CPU, multi-threaded CPU, SIMD, and
 ILGPU execution and supports `float`, `double`, and `int` arrays.
 
-Version `0.7.0` is the current stable release. The assembly public key token is
+Version `0.8.0` is the current stable release. The assembly public key token is
 `c76a60c96d65300c`.
 
 ## Quick start
 
-### 1. Install the package
+### 1. Install the packages
 
 ```powershell
-dotnet add package FastCompute --version 0.7.0
+dotnet add package FastCompute --version 0.8.0
 ```
 
 The consuming project must target .NET 8 or a compatible later framework.
+
+Image processing is a separate package that depends on the core:
+
+```powershell
+dotnet add package FastCompute.ImageProcessing --version 0.8.0
+```
+
+The core package has no image dependency; install the image package only when
+an application needs `Image<TPixel>` and friends.
 
 ### 2. Build and execute an optimized pipeline
 
@@ -338,6 +347,48 @@ element count, so a forward/inverse pair reconstructs the original input.
 Dimensions must be positive powers of two. Explicit backend selection follows
 the same strict contract as other FastCompute operations and `Auto` uses the
 normal SIMD, parallel CPU, and heavy-GPU thresholds.
+
+### Signal processing, statistics, and convolution
+
+The core API includes generic single-precision primitives that share the
+`ComputeOptions` contract and its backend selection:
+
+```csharp
+float[] power = Compute.PowerSpectrum(spectrum);
+float[] magnitudes = Compute.MagnitudeSpectrum(spectrum);
+float[] phases = Compute.PhaseSpectrum(spectrum);
+SignalPeak[] peaks = Compute.FindPeaks(values, minimumValue: 0.5f);
+
+float[] smoothed = Compute.Convolve1D(values, kernel, ConvolutionBoundary.Clamp);
+float[] windowed = Compute.ApplyHannWindow(values);
+```
+
+Phase spectrum uses `Atan2`, which has no SIMD instruction in the expression
+IR, so it runs on Scalar, Parallel CPU, or GPU and rejects explicit SIMD.
+
+Statistics cover moments, covariance, correlation, and regression:
+
+```csharp
+StatisticsResult moments = Compute.CalculateStatistics(values);
+double covariance = Compute.Covariance(x, y);
+double correlation = Compute.Correlation(x, y);
+LinearRegressionResult regression = Compute.LinearRegression(x, y);
+double entropy = Compute.ShannonEntropy(histogram);
+```
+
+Percentile/quantile/median sort a copy of the input because FastCompute does
+not yet expose a backend-native ordering primitive. Distribution moments,
+variance, covariance, and correlation are computed with the optimized
+pointer-free pipelines.
+
+Thresholding and normalization are first-class as well:
+
+```csharp
+float[] binary = Compute.Threshold(values, threshold: 0.5f);
+MinMaxResult range = Compute.MinMax(values);
+float[] unitRange = Compute.Normalize(values);
+float[] safe = Compute.SafeDivide(numerator, denominator, zeroResult: 0.0f);
+```
 
 ### Composite values and image formats
 
@@ -931,20 +982,23 @@ dotnet run --project samples/FastCompute.Sample.Console `
 ```powershell
 dotnet build FastCompute.sln --configuration Release
 dotnet test FastCompute.sln --configuration Release --no-build
-./pack.ps1 -Version 0.7.0
+./pack.ps1 -Version 0.8.0
 ```
 
 `pack.ps1` builds and tests the solution, creates `.nupkg` and `.snupkg`
-artifacts, verifies the strong-name identity, and runs a package-only consumer
-smoke test. On a Windows or Linux CI machine without a hardware GPU:
+artifacts for both the `FastCompute` and `FastCompute.ImageProcessing`
+packages, verifies the strong-name identity of both assemblies, and runs a
+package-only consumer smoke test. On a Windows or Linux CI machine without a
+hardware GPU:
 
 ```powershell
-./pack.ps1 -Version 0.7.0 -SkipGpuTests
+./pack.ps1 -Version 0.8.0 -SkipGpuTests
 ```
 
 ## Further documentation
 
 - [AiImageForensics usage and limitations](src/AiImageForensics/README.md)
+- [Image processing algorithm migration checklist](docs/ai-image-forensics-algorithm-migration.md)
 - [Stable release compliance](https://github.com/staszx/FastCompute.NET/blob/main/docs/stable-release-compliance.md)
 - [Additional technical requirements](https://github.com/staszx/FastCompute.NET/blob/main/docs/additional-requirements.md)
 - [Stage 1 architecture](https://github.com/staszx/FastCompute.NET/blob/main/docs/stage-1-architecture.md)
@@ -954,6 +1008,7 @@ smoke test. On a Windows or Linux CI machine without a hardware GPU:
 - [Stage 4 reductions and memory pooling](https://github.com/staszx/FastCompute.NET/blob/main/docs/stage-4-reductions-and-pooling.md)
 - [Stage 6 execution graph](https://github.com/staszx/FastCompute.NET/blob/main/docs/stage-6-execution-graph-plan.md)
 - [Lazy optimized array pipeline](https://github.com/staszx/FastCompute.NET/blob/main/docs/lazy-array-pipeline.md)
+- [Release notes](https://github.com/staszx/FastCompute.NET/blob/main/RELEASE_NOTES.md)
 - [Release history and known limitations](https://github.com/staszx/FastCompute.NET/blob/main/CHANGELOG.md)
 
 ## Authors

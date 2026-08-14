@@ -9,12 +9,19 @@ preferred-GPU configuration without changing the 0.5.0 execution contracts.
 FastCompute 0.7.0 introduces the backend-neutral `ComputeMath` name while
 retaining `GpuMath` as a source-compatible alias.
 
+FastCompute 0.8.0 adds native FFT, convolution, signal, statistics, and
+threshold primitives to the core and moves image processing into the separate
+`FastCompute.ImageProcessing` assembly. Lazy pipelines now fuse one binary
+`Zip` graph and fused selectors into reductions on every backend.
+
 ## Supported element types
 
 `float`, `double`, and `int` support one-shot Map, Zip, in-place operations,
 Sum, Min, Max, Average, explicit Scalar/Parallel CPU/SIMD/ILGPU execution,
 automatic CPU selection, precompilation, prepared Map operations, and
-accelerator-resident buffers.
+accelerator-resident buffers. `float` additionally supports FFT,
+convolution, signal, statistics, threshold, and packed byte-composite
+operations.
 
 Float expressions use `ComputeMath`. Double and integer expressions use arithmetic
 operators and supported `System.Math` overloads. Forced backends do not
@@ -65,8 +72,9 @@ without artificial `Task.Run` scheduling.
   disabled pool retention.
 - `PipelineFusionBenchmarks` compares independent Map calls with the fused
   pipeline and reports both execution time and managed allocation.
-- The package script builds, tests, packs, verifies strong-name identity, and
-  runs a package-only consumer.
+- The package script builds, tests, packs both `FastCompute` and
+  `FastCompute.ImageProcessing` `.nupkg`/`.snupkg` artifacts, verifies
+  strong-name identity, and runs a package-only consumer.
 - CI runs the no-hardware-GPU package path on Windows and Linux.
 
 Kernel fusion and additional GPU streaming modes remain post-0.5 features, as
